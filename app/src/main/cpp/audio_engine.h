@@ -6,6 +6,7 @@
 #include <memory>
 
 class RingBuffer;
+class DriftCorrector;
 
 class AudioEngine : public oboe::AudioStreamDataCallback,
                     public oboe::AudioStreamErrorCallback {
@@ -26,6 +27,12 @@ public:
     int32_t availableRead() const;
     void clearBuffer();
 
+    void setClockOffset(int64_t offsetNs);
+    void setDriftRate(double ppm);
+    void setAnchor(int64_t mediaTimeUs, int64_t deviceTimeNs);
+    void disableDriftCorrection();
+    int64_t getAgeNs() const;
+
     oboe::DataCallbackResult onAudioReady(
             oboe::AudioStream *oboeStream,
             void *audioData,
@@ -35,8 +42,10 @@ public:
 
 private:
     void setThreadAffinity();
+    void applyDriftCorrection(float *audioData, int32_t numFrames, int32_t samplesPerFrame);
 
     std::unique_ptr<RingBuffer> mRingBuffer;
+    std::unique_ptr<DriftCorrector> mDriftCorrector;
     std::shared_ptr<oboe::AudioStream> mStream;
     std::atomic<bool> mIsPlaying{false};
     std::atomic<bool> mSineEnabled{false};

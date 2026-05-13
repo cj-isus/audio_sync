@@ -75,6 +75,21 @@ class AudioEngine(private val context: Context) {
 
         @JvmStatic
         private external fun nativeClearBuffer(enginePtr: Long)
+
+        @JvmStatic
+        private external fun nativeSetClockOffset(enginePtr: Long, offsetNs: Long)
+
+        @JvmStatic
+        private external fun nativeSetDriftRate(enginePtr: Long, ppm: Double)
+
+        @JvmStatic
+        private external fun nativeSetAnchor(enginePtr: Long, mediaTimeUs: Long, deviceTimeNs: Long)
+
+        @JvmStatic
+        private external fun nativeDisableDriftCorrection(enginePtr: Long)
+
+        @JvmStatic
+        private external fun nativeGetAgeNs(enginePtr: Long): Long
     }
 
     init {
@@ -114,6 +129,27 @@ class AudioEngine(private val context: Context) {
 
     fun clearBuffer() {
         if (enginePtr != 0L) nativeClearBuffer(enginePtr)
+    }
+
+    fun setClockOffset(offsetNs: Long) {
+        if (enginePtr != 0L) nativeSetClockOffset(enginePtr, offsetNs)
+    }
+
+    fun setDriftRate(ppm: Double) {
+        if (enginePtr != 0L) nativeSetDriftRate(enginePtr, ppm)
+    }
+
+    fun setAnchor(mediaTimeUs: Long, deviceTimeNs: Long) {
+        if (enginePtr != 0L) nativeSetAnchor(enginePtr, mediaTimeUs, deviceTimeNs)
+    }
+
+    fun disableDriftCorrection() {
+        if (enginePtr != 0L) nativeDisableDriftCorrection(enginePtr)
+    }
+
+    fun getAgeNs(): Long {
+        if (enginePtr == 0L) return 0L
+        return nativeGetAgeNs(enginePtr)
     }
 
     fun enableSine(enable: Boolean) {

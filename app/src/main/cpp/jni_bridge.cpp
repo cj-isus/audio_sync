@@ -88,4 +88,36 @@ Java_ru_audiosynchronizer_audio_AudioEngine_nativeClearBuffer(JNIEnv *, jobject,
     if (engine) engine->clearBuffer();
 }
 
+JNIEXPORT void JNICALL
+Java_ru_audiosynchronizer_audio_AudioEngine_nativeSetClockOffset(JNIEnv *, jobject, jlong enginePtr, jlong offsetNs) {
+    auto *engine = reinterpret_cast<AudioEngine *>(enginePtr);
+    if (engine) engine->setClockOffset(offsetNs);
+}
+
+JNIEXPORT void JNICALL
+Java_ru_audiosynchronizer_audio_AudioEngine_nativeSetDriftRate(JNIEnv *, jobject, jlong enginePtr, jdouble ppm) {
+    auto *engine = reinterpret_cast<AudioEngine *>(enginePtr);
+    if (engine) engine->setDriftRate(ppm);
+}
+
+JNIEXPORT void JNICALL
+Java_ru_audiosynchronizer_audio_AudioEngine_nativeSetAnchor(
+        JNIEnv *, jobject, jlong enginePtr, jlong mediaTimeUs, jlong deviceTimeNs) {
+    auto *engine = reinterpret_cast<AudioEngine *>(enginePtr);
+    if (engine) engine->setAnchor(mediaTimeUs, deviceTimeNs);
+}
+
+JNIEXPORT void JNICALL
+Java_ru_audiosynchronizer_audio_AudioEngine_nativeDisableDriftCorrection(JNIEnv *, jobject, jlong enginePtr) {
+    auto *engine = reinterpret_cast<AudioEngine *>(enginePtr);
+    if (engine) engine->disableDriftCorrection();
+}
+
+JNIEXPORT jlong JNICALL
+Java_ru_audiosynchronizer_audio_AudioEngine_nativeGetAgeNs(JNIEnv *, jobject, jlong enginePtr) {
+    auto *engine = reinterpret_cast<AudioEngine *>(enginePtr);
+    if (!engine) return 0;
+    return engine->getAgeNs();
+}
+
 } // extern "C"

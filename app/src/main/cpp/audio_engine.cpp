@@ -1,5 +1,6 @@
 #include "audio_engine.h"
 #include "ring_buffer.h"
+#include "drift_corrector.h"
 
 #include <oboe/Oboe.h>
 #include <android/log.h>
@@ -7,6 +8,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <cmath>
+#include <chrono>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "AudioEngine", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "AudioEngine", __VA_ARGS__)
@@ -14,13 +16,14 @@
 
 static constexpr int32_t kSampleRate = 48000;
 static constexpr int32_t kChannelCount = 2;
-static constexpr int32_t kRingBufferFrames = 9600; // 200ms at 48kHz
+static constexpr int32_t kRingBufferFrames = 9600;
 static constexpr float kSineAmplitude = 0.3f;
 static constexpr int32_t kMaxRestartAttempts = 3;
 static constexpr int32_t kRestartDelayMs = 20;
 
 AudioEngine::AudioEngine()
-    : mRingBuffer(std::make_unique<RingBuffer>(kRingBufferFrames, kChannelCount)) {}
+    : mRingBuffer(std::make_unique<RingBuffer>(kRingBufferFrames, kChannelCount))
+    , mDriftCorrector(std::make_unique<DriftCorrector>()) {}
 
 AudioEngine::~AudioEngine() { stop(); }
 
@@ -76,6 +79,7 @@ void AudioEngine::stop() {
     mIsPlaying = false;
     mSinePhase = 0.0;
     mRingBuffer->clear();
+    mDriftCorrector->disable();
     LOGI("Audio engine stopped");
 }
 
@@ -103,10 +107,28 @@ bool AudioEngine::isSineEnabled() const {
 }
 
 int32_t AudioEngine::availableWrite() const { return mRingBuffer->availableWrite(); }
-
 int32_t AudioEngine::availableRead() const { return mRingBuffer->availableRead(); }
-
 void AudioEngine::clearBuffer() { mRingBuffer->clear(); }
+
+void AudioEngine::setClockOffset(int64_t offsetNs) {
+    mDriftCorrector->setClockOffset(offsetNs);
+}
+
+void AudioEngine::setDriftRate(double ppm) {
+    mDriftCorrector->setDriftRate(ppm);
+}
+
+void AudioEngine::setAnchor(int64_t mediaTimeUs, int64_t deviceTimeNs) {
+    mDriftCorrector->setAnchor(mediaTimeUs, deviceTimeNs);
+}
+
+void AudioEngine::disableDriftCorrection() {
+    mDriftCorrector->disable();
+}
+
+int64_t AudioEngine::getAgeNs() const {
+    return mDriftCorrector->getAgeNs();
+}
 
 oboe::DataCallbackResult AudioEngine::onAudioReady(
         oboe::AudioStream *oboeStream,
@@ -118,16 +140,36 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
         mThreadAffinitySet = true;
     }
 
+    int64_t localNowNs = static_cast<int64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count()
+    );
+    mDriftCorrector->computeAge(localNowNs);
+
     auto *output = static_cast<float *>(audioData);
     int32_t samplesPerFrame = oboeStream->getChannelCount();
 
-    int32_t framesRead = mRingBuffer->read(output, numFrames);
+    int32_t framesCorrection = mDriftCorrector->computeFramesCorrection(numFrames, mSampleRate);
 
-    if (framesRead < numFrames) {
-        int32_t startSample = framesRead * samplesPerFrame;
-        int32_t totalSamples = numFrames * samplesPerFrame;
-        std::memset(&output[startSample], 0,
-                    (totalSamples - startSample) * sizeof(float));
+    int32_t framesRead;
+    if (framesCorrection > 0) {
+        framesRead = mRingBuffer->read(output, numFrames + framesCorrection);
+        applyDriftCorrection(output, numFrames + framesCorrection, samplesPerFrame);
+    } else if (framesCorrection < 0) {
+        framesRead = mRingBuffer->read(output, numFrames + framesCorrection);
+        if (framesRead < numFrames) {
+            int32_t startSample = framesRead * samplesPerFrame;
+            int32_t totalSamples = numFrames * samplesPerFrame;
+            std::memset(&output[startSample], 0,
+                        (totalSamples - startSample) * sizeof(float));
+        }
+    } else {
+        framesRead = mRingBuffer->read(output, numFrames);
+        if (framesRead < numFrames) {
+            int32_t startSample = framesRead * samplesPerFrame;
+            int32_t totalSamples = numFrames * samplesPerFrame;
+            std::memset(&output[startSample], 0,
+                        (totalSamples - startSample) * sizeof(float));
+        }
     }
 
     if (mSineEnabled.load(std::memory_order_acquire)) {
@@ -143,6 +185,14 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
     }
 
     return oboe::DataCallbackResult::Continue;
+}
+
+void AudioEngine::applyDriftCorrection(float *audioData, int32_t totalFrames, int32_t samplesPerFrame) {
+    // Simple pass-through for now - correction is handled by frame count adjustment
+    // Future: implement sample interpolation for smoother correction
+    (void)audioData;
+    (void)totalFrames;
+    (void)samplesPerFrame;
 }
 
 void AudioEngine::onErrorAfterClose(oboe::AudioStream *oboeStream, oboe::Result error) {
