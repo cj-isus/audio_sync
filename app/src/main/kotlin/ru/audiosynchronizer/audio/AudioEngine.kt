@@ -211,6 +211,55 @@ class AudioEngine(private val context: Context) {
         }
     }
 
+    fun seekToMediaTimeUs(timeUs: Long) {
+        val source = currentSource ?: return
+        val info = source.info
+        val frameIndex = (timeUs * info.sampleRate) / 1_000_000L
+
+        fillerJob?.cancel()
+        fillerJob = null
+        clearBuffer()
+
+        source.seekToFrame(frameIndex.coerceIn(0, info.totalFrames))
+        _positionFrames.value = source.getPositionFrames()
+
+        if (_playbackState.value == PlaybackState.PLAYING) {
+            startFiller(source)
+        }
+    }
+
+    fun getMediaTimeUs(): Long {
+        val info = _currentInfo.value ?: return 0L
+        return (_positionFrames.value * 1_000_000L) / info.sampleRate
+    }
+
+    private fun startFiller(source: AudioSource) {
+        fillerJob = fillerScope.launch {
+            try {
+                while (isActive && _playbackState.value == PlaybackState.PLAYING) {
+                    while (availableWrite() < MIN_FREE_FRAMES) {
+                        if (!isActive || _playbackState.value != PlaybackState.PLAYING) return@launch
+                        delay(5)
+                    }
+
+                    val chunk = source.readNext(FRAMES_PER_CHUNK)
+                    if (chunk == null) {
+                        while (isActive && availableRead() > 0) delay(50)
+                        delay(200)
+                        _playbackState.value = PlaybackState.STOPPED
+                        break
+                    }
+
+                    nativeWriteBuffer(enginePtr, chunk, 0, chunk.size)
+                    _positionFrames.value = source.getPositionFrames()
+                }
+            } catch (_: CancellationException) {
+            } catch (e: Exception) {
+                _playbackState.value = PlaybackState.STOPPED
+            }
+        }
+    }
+
     fun stopPlayback() {
         fillerJob?.cancel()
         fillerJob = null
