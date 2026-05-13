@@ -50,5 +50,10 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".service.SyncService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
+
     </application>
 </manifest>

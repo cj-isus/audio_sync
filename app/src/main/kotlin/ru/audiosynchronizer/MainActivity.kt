@@ -10,9 +10,12 @@ import androidx.compose.ui.Modifier
 import dagger.hilt.android.AndroidEntryPoint
 import ru.audiosynchronizer.audio.AudioEngine
 import ru.audiosynchronizer.network.ConnectionManager
+import ru.audiosynchronizer.network.DiscoveryManager
+import ru.audiosynchronizer.network.HotspotManager
 import ru.audiosynchronizer.sync.ClockSynchronizer
 import ru.audiosynchronizer.sync.SyncSession
 import ru.audiosynchronizer.ui.ClockSyncScreen
+import ru.audiosynchronizer.ui.DevicesScreen
 import ru.audiosynchronizer.ui.PlayerScreen
 import ru.audiosynchronizer.ui.SyncPlayScreen
 
@@ -35,17 +38,21 @@ private fun MainApp() {
     val clockSync = remember { ClockSynchronizer() }
     val session = remember { SyncSession() }
     val connection = remember { ConnectionManager() }
+    val discovery = remember { DiscoveryManager(context) }
+    val hotspot = remember { HotspotManager(context) }
 
     DisposableEffect(Unit) {
         onDispose {
             engine.close()
             clockSync.stop()
             connection.stop()
+            discovery.stopDiscovery()
+            hotspot.stopHotspot()
         }
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Player", "Clock Sync", "Sync Play")
+    val tabs = listOf("Player", "Clock Sync", "Sync Play", "Devices")
 
     Scaffold(
         bottomBar = {
@@ -65,6 +72,7 @@ private fun MainApp() {
             0 -> PlayerScreen(engine)
             1 -> ClockSyncScreen(clockSync)
             2 -> SyncPlayScreen(session, connection, clockSync, engine)
+            3 -> DevicesScreen(discovery, hotspot, connection)
         }
     }
 }
