@@ -14,10 +14,7 @@ import ru.audiosynchronizer.network.DiscoveryManager
 import ru.audiosynchronizer.network.HotspotManager
 import ru.audiosynchronizer.sync.ClockSynchronizer
 import ru.audiosynchronizer.sync.SyncSession
-import ru.audiosynchronizer.ui.ClockSyncScreen
-import ru.audiosynchronizer.ui.DevicesScreen
-import ru.audiosynchronizer.ui.PlayerScreen
-import ru.audiosynchronizer.ui.SyncPlayScreen
+import ru.audiosynchronizer.ui.*
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -52,7 +49,7 @@ private fun MainApp() {
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Player", "Clock Sync", "Sync Play", "Devices")
+    val tabs = listOf("Player", "Clock Sync", "Sync Play", "Devices", "Session")
 
     Scaffold(
         bottomBar = {
@@ -73,6 +70,7 @@ private fun MainApp() {
             1 -> ClockSyncScreen(clockSync)
             2 -> SyncPlayScreen(session, connection, clockSync, engine)
             3 -> DevicesScreen(discovery, hotspot, connection)
+            4 -> SessionScreen(session, connection, clockSync, engine)
         }
     }
 }

@@ -9,6 +9,7 @@ enum class SessionState {
     DISCONNECTED,
     CONNECTING,
     CLOCK_SYNCING,
+    FILE_TRANSFER,
     READY,
     PLAYING,
     PAUSED
@@ -19,6 +20,7 @@ data class SyncSessionState(
     val isLeader: Boolean = false,
     val connectedDevices: Int = 0,
     val deviceName: String = "",
+    val fileTransferProgress: Float = 0f,
     val error: String? = null
 )
 
@@ -53,6 +55,10 @@ class SyncSession {
             TimelineAnchorMessage.STATE_STOPPED -> setState(SessionState.READY)
             TimelineAnchorMessage.STATE_SEEKING -> { /* handled by TimelineManager */ }
         }
+    }
+
+    fun setFileTransferProgress(progress: Float) {
+        _sessionState.value = _sessionState.value.copy(fileTransferProgress = progress)
     }
 
     fun reset() {
