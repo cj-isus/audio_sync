@@ -75,4 +75,17 @@ Java_ru_audiosynchronizer_audio_AudioEngine_nativeAvailableWrite(JNIEnv *, jobje
     return engine->availableWrite();
 }
 
+JNIEXPORT jint JNICALL
+Java_ru_audiosynchronizer_audio_AudioEngine_nativeAvailableRead(JNIEnv *, jobject, jlong enginePtr) {
+    auto *engine = reinterpret_cast<AudioEngine *>(enginePtr);
+    if (!engine) return 0;
+    return engine->availableRead();
+}
+
+JNIEXPORT void JNICALL
+Java_ru_audiosynchronizer_audio_AudioEngine_nativeClearBuffer(JNIEnv *, jobject, jlong enginePtr) {
+    auto *engine = reinterpret_cast<AudioEngine *>(enginePtr);
+    if (engine) engine->clearBuffer();
+}
+
 } // extern "C"

@@ -23,6 +23,8 @@ public:
     void enableSine(bool enable);
     bool isSineEnabled() const;
     int32_t availableWrite() const;
+    int32_t availableRead() const;
+    void clearBuffer();
 
     oboe::DataCallbackResult onAudioReady(
             oboe::AudioStream *oboeStream,

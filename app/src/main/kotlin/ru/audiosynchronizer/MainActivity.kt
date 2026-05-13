@@ -1,17 +1,24 @@
 package ru.audiosynchronizer
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
 import ru.audiosynchronizer.audio.AudioEngine
+import ru.audiosynchronizer.audio.PlaybackState
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -29,22 +36,44 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun MainScreen() {
-    val engine = remember { AudioEngine() }
-    var isPlaying by remember { mutableStateOf(false) }
-    var isSineOn by remember { mutableStateOf(false) }
-    var latencyMs by remember { mutableStateOf(-1.0) }
-    var statusText by remember { mutableStateOf("Stopped") }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val engine = remember { AudioEngine(context) }
+    val playbackState by engine.playbackState.collectAsState()
+    val currentInfo by engine.currentInfo.collectAsState()
+    val positionFrames by engine.positionFrames.collectAsState()
+    val latencyMs by engine.latencyMs.collectAsState()
 
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
-            latencyMs = engine.getLatencyMs()
+    var isSineOn by remember { mutableStateOf(false) }
+    var isEngineStarted by remember { mutableStateOf(false) }
+    var permissionDenied by remember { mutableStateOf(false) }
+
+    val pickAudio = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            engine.playFile(uri)
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            pickAudio.launch(arrayOf("audio/*"))
+        } else {
+            permissionDenied = true
+        }
+    }
+
+    LaunchedEffect(isEngineStarted) {
+        while (isEngineStarted || playbackState == PlaybackState.PLAYING || playbackState == PlaybackState.PAUSED) {
+            engine.getLatencyMs()
             delay(500)
         }
     }
 
     DisposableEffect(Unit) {
         onDispose {
-            engine.stop()
             engine.close()
         }
     }
@@ -52,7 +81,7 @@ private fun MainScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp),
+            .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -64,46 +93,108 @@ private fun MainScreen() {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            statusText,
+            when (playbackState) {
+                PlaybackState.STOPPED -> if (isEngineStarted) "Stopped" else "Ready"
+                PlaybackState.PLAYING -> "Playing"
+                PlaybackState.PAUSED -> "Paused"
+            },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        if (isPlaying && latencyMs >= 0) {
+        currentInfo?.let { info ->
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "Output latency: ${"%.1f".format(latencyMs)} ms",
+                info.displayName,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary
             )
+
+            val posSec = if (info.sampleRate > 0) positionFrames / info.sampleRate else 0L
+            val durSec = info.durationMs / 1000
+            Text(
+                "%d:%02d / %d:%02d".format(posSec / 60, posSec % 60, durSec / 60, durSec % 60),
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            if (info.sampleRate > 0) {
+                val progress = (positionFrames.toFloat() / info.totalFrames.toFloat()).coerceIn(0f, 1f)
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        if (latencyMs >= 0) {
+            Text(
+                "Latency: ${"%.1f".format(latencyMs)} ms",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.tertiary
+            )
+        }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Button(
-                onClick = {
-                    if (!isPlaying) {
-                        val ok = engine.start()
-                        isPlaying = ok
-                        statusText = if (ok) "Engine started" else "Start failed"
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = {
+                val perm = if (Build.VERSION.SDK_INT >= 33) {
+                    Manifest.permission.READ_MEDIA_AUDIO
+                } else {
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                }
+                if (ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED) {
+                    pickAudio.launch(arrayOf("audio/*"))
+                } else {
+                    permissionDenied = false
+                    permissionLauncher.launch(perm)
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Pick Audio File")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            when (playbackState) {
+                PlaybackState.PLAYING -> {
+                    OutlinedButton(
+                        onClick = { engine.pause() },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Pause") }
+                    OutlinedButton(
+                        onClick = { engine.stopPlayback(); isEngineStarted = false },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Stop") }
+                }
+                PlaybackState.PAUSED -> {
+                    Button(
+                        onClick = { engine.resume() },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Resume") }
+                    OutlinedButton(
+                        onClick = { engine.stopPlayback(); isEngineStarted = false },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Stop") }
+                }
+                PlaybackState.STOPPED -> {
+                    if (isEngineStarted) {
+                        Button(
+                            onClick = {
+                                engine.start()
+                                isEngineStarted = true
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Start Engine") }
                     }
-                },
-                enabled = !isPlaying
-            ) {
-                Text("Start Engine")
-            }
-
-            Button(
-                onClick = {
-                    engine.stop()
-                    isPlaying = false
-                    isSineOn = false
-                    latencyMs = -1.0
-                    statusText = "Stopped"
-                },
-                enabled = isPlaying
-            ) {
-                Text("Stop Engine")
+                }
             }
         }
 
@@ -111,13 +202,26 @@ private fun MainScreen() {
 
         OutlinedButton(
             onClick = {
+                if (!isEngineStarted) {
+                    val ok = engine.start()
+                    isEngineStarted = ok
+                }
                 isSineOn = !isSineOn
                 engine.enableSine(isSineOn)
-                statusText = if (isSineOn) "Sine 440Hz ON" else "Sine OFF"
             },
-            enabled = isPlaying
+            enabled = isEngineStarted || playbackState != PlaybackState.STOPPED,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (isSineOn) "Stop Sine" else "Play Sine 440Hz")
+            Text(if (isSineOn) "Stop Sine 440Hz" else "Play Sine 440Hz")
+        }
+
+        if (permissionDenied) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Audio permission required to pick files",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
         }
     }
 }

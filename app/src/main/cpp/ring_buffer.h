@@ -16,7 +16,7 @@ public:
 
     int32_t write(const float *data, int32_t frames) {
         int32_t samplesToWrite = frames * mChannelCount;
-        int32_t available = availableWrite();
+        int32_t available = availableWrite() * mChannelCount;
         int32_t actualSamples = (samplesToWrite < available) ? samplesToWrite : available;
 
         for (int32_t i = 0; i < actualSamples; i++) {
@@ -29,7 +29,7 @@ public:
 
     int32_t read(float *data, int32_t frames) {
         int32_t samplesToRead = frames * mChannelCount;
-        int32_t available = availableRead();
+        int32_t available = availableRead() * mChannelCount;
         int32_t actualSamples = (samplesToRead < available) ? samplesToRead : available;
 
         for (int32_t i = 0; i < actualSamples; i++) {

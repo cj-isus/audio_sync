@@ -104,6 +104,10 @@ bool AudioEngine::isSineEnabled() const {
 
 int32_t AudioEngine::availableWrite() const { return mRingBuffer->availableWrite(); }
 
+int32_t AudioEngine::availableRead() const { return mRingBuffer->availableRead(); }
+
+void AudioEngine::clearBuffer() { mRingBuffer->clear(); }
+
 oboe::DataCallbackResult AudioEngine::onAudioReady(
         oboe::AudioStream *oboeStream,
         void *audioData,
