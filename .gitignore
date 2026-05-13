@@ -22,4 +22,5 @@ local.properties
 *.jks
 
 network_config.json
+buildSrc/
 repo_snapclient/
