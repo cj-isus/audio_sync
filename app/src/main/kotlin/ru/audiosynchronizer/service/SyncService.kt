@@ -9,6 +9,7 @@ import androidx.core.app.ServiceCompat
 import ru.audiosynchronizer.audio.AudioEngine
 import ru.audiosynchronizer.network.ConnectionManager
 import ru.audiosynchronizer.sync.ClockSynchronizer
+import ru.audiosynchronizer.sync.LatencyCompensator
 import ru.audiosynchronizer.sync.SyncSession
 import ru.audiosynchronizer.sync.TimelineManager
 
@@ -27,6 +28,8 @@ class SyncService : Service() {
         private set
     lateinit var timeline: TimelineManager
         private set
+    lateinit var latencyCompensator: LatencyCompensator
+        private set
 
     inner class LocalBinder : Binder() {
         fun getService(): SyncService = this@SyncService
@@ -39,7 +42,8 @@ class SyncService : Service() {
         clockSync = ClockSynchronizer()
         session = SyncSession()
         connection = ConnectionManager()
-        timeline = TimelineManager(session, clockSync)
+        latencyCompensator = LatencyCompensator()
+        timeline = TimelineManager(session, clockSync, latencyCompensator)
     }
 
     override fun onBind(intent: Intent?): IBinder = binder

@@ -5,15 +5,16 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import ru.audiosynchronizer.protocol.ControlMessage
 import ru.audiosynchronizer.protocol.Message
 import ru.audiosynchronizer.protocol.MessageCodec
 import ru.audiosynchronizer.protocol.TimelineAnchorMessage
 import java.io.OutputStream
-import java.net.Socket
 
 class TimelineManager(
     private val session: SyncSession,
-    private val clockSync: ClockSynchronizer
+    private val clockSync: ClockSynchronizer,
+    private val latencyCompensator: LatencyCompensator? = null
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var anchorJob: Job? = null
@@ -27,6 +28,7 @@ class TimelineManager(
     companion object {
         private const val TAG = "TimelineManager"
         private const val ANCHOR_INTERVAL_MS = 200L
+        private const val FEEDBACK_INTERVAL_MS = 2000L
     }
 
     fun startLeaderBroadcast(
@@ -54,6 +56,34 @@ class TimelineManager(
         }
     }
 
+    fun startLeaderBroadcastPerClient(
+        clients: Map<Int, OutputStream>,
+        getMediaTimeUs: () -> Long,
+        getPlaybackState: () -> Int
+    ) {
+        stop()
+        anchorJob = scope.launch {
+            while (coroutineContext.isActive) {
+                val baseAnchor = TimelineAnchorMessage(
+                    mediaTimeUs = getMediaTimeUs(),
+                    deviceTimeNs = System.nanoTime(),
+                    sampleRate = 48000,
+                    playbackState = getPlaybackState()
+                )
+
+                for ((clientId, output) in clients) {
+                    val anchor = latencyCompensator?.compensateAnchor(baseAnchor, clientId) ?: baseAnchor
+                    try {
+                        MessageCodec.writeMessage(output, Message.TimelineAnchor(anchor))
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to send anchor to client $clientId", e)
+                    }
+                }
+                delay(ANCHOR_INTERVAL_MS)
+            }
+        }
+    }
+
     fun processAnchor(anchor: TimelineAnchorMessage) {
         lastAnchor = anchor
         lastSyncTimeNs = System.nanoTime()
@@ -75,11 +105,31 @@ class TimelineManager(
         return positionUs
     }
 
-    fun sendControl(output: OutputStream, action: Int, seekPositionUs: Long = 0L) {
-        val ctrl = ru.audiosynchronizer.protocol.ControlMessage(
-            action = action,
-            seekPositionUs = seekPositionUs
+    fun sendFeedback(output: OutputStream, actualPlayoutTimeNs: Long, scheduledPlayoutTimeNs: Long) {
+        val deviation = actualPlayoutTimeNs - scheduledPlayoutTimeNs
+        val heartbeat = ru.audiosynchronizer.protocol.HeartbeatMessage(
+            timestampNs = System.nanoTime(),
+            actualPlayoutTimeNs = actualPlayoutTimeNs,
+            scheduledPlayoutTimeNs = scheduledPlayoutTimeNs
         )
+        try {
+            MessageCodec.writeMessage(output, Message.Heartbeat(heartbeat))
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send feedback", e)
+        }
+    }
+
+    fun processFeedback(clientId: Int, actualNs: Long, scheduledNs: Long) {
+        val deviationNs = actualNs - scheduledNs
+        latencyCompensator?.updateDeviation(clientId, deviationNs)
+
+        if (kotlin.math.abs(deviationNs) > 1_000_000L) {
+            Log.w(TAG, "Client $clientId deviation: ${deviationNs / 1e6}ms")
+        }
+    }
+
+    fun sendControl(output: OutputStream, action: Int, seekPositionUs: Long = 0L) {
+        val ctrl = ControlMessage(action = action, seekPositionUs = seekPositionUs)
         MessageCodec.writeMessage(output, Message.Control(ctrl))
     }
 
