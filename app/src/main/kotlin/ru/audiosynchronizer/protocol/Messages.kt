@@ -65,6 +65,26 @@ data class HeartbeatMessage(
 )
 
 @Serializable
+data class WireChunk(
+    val timestampUs: Long,
+    val codec: String = "pcm",
+    val payload: ByteArray = ByteArray(0),
+    val sequenceNumber: Long = 0L
+) {
+    companion object {
+        const val CODEC_PCM = "pcm"
+        const val CODEC_OPUS = "opus"
+        const val OPUS_FRAME_SIZE_SAMPLES = 240
+        const val OPUS_SAMPLE_RATE = 48000
+        const val OPUS_CHANNELS = 2
+        const val OPUS_BITRATE = 128000
+    }
+
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
+
+@Serializable
 sealed class Message {
     @Serializable
     data class Hello(val data: HelloMessage) : Message()
@@ -83,4 +103,7 @@ sealed class Message {
 
     @Serializable
     data class Heartbeat(val data: HeartbeatMessage) : Message()
+
+    @Serializable
+    data class WireChunkMsg(val data: WireChunk) : Message()
 }

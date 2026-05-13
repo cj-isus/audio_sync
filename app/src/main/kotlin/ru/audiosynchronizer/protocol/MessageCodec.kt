@@ -25,6 +25,7 @@ object MessageCodec {
             is Message.Control -> 0x04
             is Message.FileMeta -> 0x05
             is Message.Heartbeat -> 0x06
+            is Message.WireChunkMsg -> 0x07
         }
         val payload = json.encodeToString(msg).toByteArray(Charsets.UTF_8)
         val buf = ByteBuffer.allocate(HEADER_SIZE + payload.size)
@@ -56,6 +57,7 @@ object MessageCodec {
                 0x04.toByte() -> json.decodeFromString<Message.Control>(payloadJson)
                 0x05.toByte() -> json.decodeFromString<Message.FileMeta>(payloadJson)
                 0x06.toByte() -> json.decodeFromString<Message.Heartbeat>(payloadJson)
+                0x07.toByte() -> json.decodeFromString<Message.WireChunkMsg>(payloadJson)
                 else -> null
             }
         } catch (e: SerializationException) {
@@ -96,6 +98,7 @@ object MessageCodec {
                 0x04.toByte() -> json.decodeFromString<Message.Control>(payloadJson)
                 0x05.toByte() -> json.decodeFromString<Message.FileMeta>(payloadJson)
                 0x06.toByte() -> json.decodeFromString<Message.Heartbeat>(payloadJson)
+                0x07.toByte() -> json.decodeFromString<Message.WireChunkMsg>(payloadJson)
                 else -> null
             }
         } catch (e: SerializationException) {
