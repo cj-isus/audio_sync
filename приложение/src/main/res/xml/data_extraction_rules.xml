@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- 
+    ============================================================================================
+    ПРАВИЛА ИЗВЛЕЧЕНИЯ ДАННЫХ (ANDROID 12+)
+    ============================================================================================
+    Определяет правила извлечения данных для резервного копирования на Android 12+
+    ============================================================================================
+    -->
+    
+    <cloud-backup>
+        <!-- Исключить чувствительные данные из облачного бэкапа -->
+        <exclude domain="sharedpref" path="auth_tokens.xml" />
+        <exclude domain="database" path="user_sessions.db" />
+        
+        <!-- Включить пользовательские настройки -->
+        <include domain="sharedpref" path="user_preferences.xml" />
+    </cloud-backup>
+    
+    <device-transfer>
+        <!-- Правила для переноса между устройствами -->
+        <include domain="sharedpref" path="." />
+        <exclude domain="database" path="temp.db" />
+    </device-transfer>
+</data-extraction-rules>

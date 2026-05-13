@@ -1,0 +1,74 @@
+# 📐 СТИЛЬ КОДА И КОНФИГУРАЦИЯ ДЛЯ РОССИЙСКИХ СТАНДАРТОВ
+
+## 🇷🇺 СООТВЕТСТВИЕ ГОСТ И РОССИЙСКИМ СТАНДАРТАМ
+
+### Конфигурация форматирования кода согласно российским стандартам
+# Используется для автоматического форматирования кода в соответствии с ГОСТ
+
+[*]
+# Общие настройки для всех файлов
+charset = utf-8
+end_of_line = crlf  # Используем Windows-стиль окончания строк для совместимости с российским ПО
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{kt,kts}]
+# Настройки для файлов Kotlin - основного языка разработки
+indent_size = 4
+max_line_length = 120  # Соответствует российским стандартам читаемости кода
+continuation_indent_size = 8
+
+# Настройки импортов для русифицированной структуры
+ij_kotlin_imports_layout = *,java.**,javax.**,kotlin.**,^
+
+# Настройки для русских комментариев
+ij_kotlin_line_comment_at_first_column = false
+ij_kotlin_line_comment_add_space = true
+ij_kotlin_block_comment_at_first_column = false
+
+# Форматирование для читаемости на русском языке
+ij_kotlin_align_multiline_parameters = true
+ij_kotlin_allow_trailing_comma = true
+ij_kotlin_call_parameters_wrap = normal
+ij_kotlin_continuation_indent_for_chained_calls = true
+
+[*.{xml,html}]
+# Настройки для XML файлов (AndroidManifest.xml, ресурсы)
+indent_size = 4
+ij_xml_attribute_wrap = normal
+ij_xml_text_wrap = normal
+
+[*.{json,yml,yaml}]
+# Настройки для конфигурационных файлов
+indent_size = 2
+
+[*.{md,txt}]
+# Настройки для документации на русском языке
+max_line_length = off
+trim_trailing_whitespace = false
+
+[*.{bat,cmd}]
+# Настройки для Windows batch файлов
+end_of_line = crlf
+indent_size = 2
+
+[*.{sh,bash}]
+# Настройки для shell скриптов (если используются в CI/CD)
+end_of_line = lf
+indent_size = 2
+
+[*.properties]
+# Настройки для файлов свойств
+charset = utf-8
+end_of_line = crlf
+
+# Дополнительные настройки для российской локализации
+[gradle.properties]
+# Специфические настройки для Gradle properties
+charset = utf-8
+
+[*.pro]
+# Настройки для ProGuard rules
+indent_size = 4
+max_line_length = 100
