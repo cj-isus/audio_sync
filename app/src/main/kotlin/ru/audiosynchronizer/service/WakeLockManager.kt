@@ -2,12 +2,16 @@ package ru.audiosynchronizer.service
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.PowerManager
 import androidx.annotation.RequiresPermission
 
 class WakeLockManager(private val context: Context) {
 
+    @Volatile
     private var wakeLock: PowerManager.WakeLock? = null
+
+    @Volatile
     private var wifiLock: WifiManager.WifiLock? = null
 
     companion object {
@@ -22,11 +26,18 @@ class WakeLockManager(private val context: Context) {
 
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
-            acquire(30 * 60 * 1000L)
+            setReferenceCounted(false)
+            acquire()
         }
 
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG).apply {
+        val mode = if (Build.VERSION.SDK_INT >= 29) {
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        } else {
+            @Suppress("DEPRECATION")
+            WifiManager.WIFI_MODE_FULL
+        }
+        wifiLock = wifi.createWifiLock(mode, WIFI_LOCK_TAG).apply {
             acquire()
         }
     }

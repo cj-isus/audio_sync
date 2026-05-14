@@ -218,9 +218,10 @@ class MediaCodecDecoder(
     override fun seekToFrame(frameIndex: Long) {
         val dec = decoder
         if (dec != null && isDecoderStarted) {
-            dec.stop()
-            dec.release()
+            try { dec.stop() } catch (_: Exception) {}
+            try { dec.release() } catch (_: Exception) {}
         }
+        decoder = null
         isDecoderStarted = false
         isEos = false
         inputEos = false
@@ -231,9 +232,11 @@ class MediaCodecDecoder(
 
         val format = extractor.getTrackFormat(trackIndex)
         val mime = format.getString(MediaFormat.KEY_MIME) ?: return
-        decoder = MediaCodec.createDecoderByType(mime)
-        decoder?.configure(format, null, null, 0)
-        isDecoderStarted = false
+        val newDecoder = MediaCodec.createDecoderByType(mime)
+        newDecoder.configure(format, null, null, 0)
+        newDecoder.start()
+        decoder = newDecoder
+        isDecoderStarted = true
         _positionFrames = frameIndex
     }
 

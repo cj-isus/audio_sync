@@ -24,7 +24,7 @@ data class AudioFileInfo(
                 while (input.read(buf).also { n = it } > 0) {
                     digest.update(buf, 0, n)
                 }
-            } ?: return ""
+            } ?: throw IllegalArgumentException("Cannot open URI for hashing: $uri")
             return digest.digest().joinToString("") { "%02x".format(it) }
         }
     }

@@ -46,18 +46,21 @@ class ClockSynchronizer {
         private const val MAX_RTT_MS = 10.0
     }
 
+    @Synchronized
     fun startLeader() {
         stop()
         _state.value = _state.value.copy(role = ClockRole.LEADER, isSyncing = true, error = null)
         syncJob = scope.launch { leaderLoop() }
     }
 
+    @Synchronized
     fun startFollower(leaderIp: String) {
         stop()
         _state.value = _state.value.copy(role = ClockRole.FOLLOWER, isSyncing = true, error = null)
         syncJob = scope.launch { followerLoop(leaderIp) }
     }
 
+    @Synchronized
     fun stop() {
         syncJob?.cancel()
         syncJob = null
@@ -66,23 +69,32 @@ class ClockSynchronizer {
         _state.value = _state.value.copy(isSyncing = false)
     }
 
-    fun reset() {
-        kalman.reset()
-        medianOffset.clear()
-        medianRtt.clear()
-        _state.value = ClockSyncState()
+    fun cancelScope() {
+        scope.cancel()
     }
 
+    @Synchronized
     fun getOffsetMs(): Double {
         return if (kalman.isStable()) kalman.getOffset() else medianOffset.median()
     }
 
+    @Synchronized
     fun getDriftPpm(): Double {
         return if (kalman.isStable()) kalman.getDriftRate() else 0.0
     }
 
+    @Synchronized
     fun getOffsetNs(): Long {
         return (getOffsetMs() * 1_000_000).toLong()
+    }
+
+    fun reset() {
+        synchronized(this) {
+            kalman.reset()
+            medianOffset.clear()
+            medianRtt.clear()
+        }
+        _state.value = ClockSyncState()
     }
 
     private suspend fun leaderLoop() {
@@ -116,20 +128,22 @@ class ClockSynchronizer {
                 )
                 serverSocket?.send(sendPacket)
             }
-        } catch (e: CancellationException) {
-            // expected
+        } catch (_: CancellationException) {
         } catch (e: Exception) {
             Log.e(TAG, "Leader error", e)
             _state.value = _state.value.copy(error = e.message)
+        } finally {
+            try { serverSocket?.close() } catch (_: Exception) {}
+            serverSocket = null
         }
     }
 
     private suspend fun followerLoop(leaderIp: String) {
+        val socket = DatagramSocket()
         try {
-            val leaderAddress = InetAddress.getByName(leaderIp)
-            val socket = DatagramSocket()
             socket.soTimeout = 3000
 
+            val leaderAddress = InetAddress.getByName(leaderIp)
             val buf = ByteArray(PACKET_SIZE)
             val receivePacket = DatagramPacket(buf, buf.size)
 
@@ -147,7 +161,8 @@ class ClockSynchronizer {
                 } catch (e: java.net.SocketTimeoutException) {
                     Log.w(TAG, "Request timed out")
                     _state.value = _state.value.copy(error = "Timeout")
-                    delay(STEADY_INTERVAL_MS)
+                    val delayMs = if (initialCount < INITIAL_COUNT) INITIAL_INTERVAL_MS else STEADY_INTERVAL_MS
+                    delay(delayMs)
                     continue
                 }
 
@@ -174,9 +189,11 @@ class ClockSynchronizer {
                 val offsetNs = ((t2r - t1r) + (t3r - t4)) / 2.0
                 val offsetMs = offsetNs / 1e6
 
-                kalman.update(offsetNs, rttNs.toDouble())
-                medianOffset.add(offsetMs)
-                medianRtt.add(rttMs)
+                synchronized(this) {
+                    kalman.update(offsetNs, rttNs.toDouble())
+                    medianOffset.add(offsetMs)
+                    medianRtt.add(rttMs)
+                }
 
                 _state.value = _state.value.copy(
                     offsetMs = if (kalman.isStable()) kalman.getOffset() / 1e6 else medianOffset.median(),
@@ -191,13 +208,12 @@ class ClockSynchronizer {
                 val delayMs = if (initialCount < INITIAL_COUNT) INITIAL_INTERVAL_MS else STEADY_INTERVAL_MS
                 delay(delayMs)
             }
-
-            socket.close()
-        } catch (e: CancellationException) {
-            // expected
+        } catch (_: CancellationException) {
         } catch (e: Exception) {
             Log.e(TAG, "Follower error", e)
             _state.value = _state.value.copy(error = e.message)
+        } finally {
+            try { socket.close() } catch (_: Exception) {}
         }
     }
 }

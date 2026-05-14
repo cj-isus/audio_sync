@@ -3,11 +3,17 @@ package ru.audiosynchronizer.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import ru.audiosynchronizer.network.*
 
@@ -30,67 +36,139 @@ fun DevicesScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("Devices", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            "Устройства",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            FilterChip(selected = isLeader, onClick = { isLeader = true }, label = { Text("Leader") })
-            FilterChip(selected = !isLeader, onClick = { isLeader = false }, label = { Text("Follower") })
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Роль", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    FilterChip(
+                        selected = isLeader,
+                        onClick = { isLeader = true },
+                        label = { Text("Лидер") },
+                        leadingIcon = if (isLeader) {
+                            { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        } else null
+                    )
+                    FilterChip(
+                        selected = !isLeader,
+                        onClick = { isLeader = false },
+                        label = { Text("Ведомый") },
+                        leadingIcon = if (!isLeader) {
+                            { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        } else null
+                    )
+                }
+            }
         }
 
         if (isLeader) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Button(
                     onClick = {
                         discovery.registerService(ConnectionManager.PORT)
                         hotspot.startHotspot()
                     },
-                    enabled = !isRegistered
-                ) { Text("Start Hotspot") }
+                    enabled = !isRegistered,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Filled.WifiTethering, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Точка доступа")
+                }
 
                 OutlinedButton(
-                    onClick = { discovery.stopDiscovery(); hotspot.stopHotspot() },
-                    enabled = isRegistered || hotspotInfo.isRunning
-                ) { Text("Stop") }
+                    onClick = { discovery.stopAll(); hotspot.stopHotspot() },
+                    enabled = isRegistered || hotspotInfo.isRunning,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Остановить")
+                }
             }
 
             if (hotspotInfo.isRunning) {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Hotspot Active", style = MaterialTheme.typography.titleMedium)
-                        Text("SSID: ${hotspotInfo.ssid}")
-                        Text("Password: ${hotspotInfo.passphrase}")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Wifi, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Точка доступа активна", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        MetricRow("SSID", hotspotInfo.ssid)
+                        if (hotspotInfo.passphrase.isNotEmpty()) {
+                            MetricRow("Пароль", hotspotInfo.passphrase)
+                        }
                     }
                 }
             }
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Button(
                     onClick = { discovery.startDiscovery() },
-                    enabled = !isDiscovering
-                ) { Text("Scan") }
+                    enabled = !isDiscovering,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Поиск")
+                }
 
                 OutlinedButton(
                     onClick = { discovery.stopDiscovery() },
-                    enabled = isDiscovering
-                ) { Text("Stop Scan") }
+                    enabled = isDiscovering,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Остановить")
+                }
             }
 
             if (devices.isNotEmpty()) {
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(devices) { device ->
-                        ListItem(
-                            headlineContent = { Text(device.serviceName) },
-                            supportingContent = { Text("${device.host}:${device.port}") },
-                            trailingContent = {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Найденные устройства", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        devices.forEach { device ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(device.serviceName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                    Text("${device.host}:${device.port}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                                 FilledTonalButton(onClick = {
                                     connection.connectToLeader(device.host)
-                                }) { Text("Connect") }
+                                }) {
+                                    Icon(Icons.AutoMirrored.Filled.Login, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Подключить")
+                                }
                             }
-                        )
+                            if (device != devices.last()) HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        }
                     }
                 }
             }
@@ -100,7 +178,9 @@ fun DevicesScreen(
             OutlinedTextField(
                 value = manualIp,
                 onValueChange = { manualIp = it },
-                label = { Text("Manual IP") },
+                label = { Text("IP вручную") },
+                placeholder = { Text("192.168.1.100") },
+                leadingIcon = { Icon(Icons.Filled.Router, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -108,11 +188,21 @@ fun DevicesScreen(
             Button(
                 onClick = { connection.connectToLeader(manualIp) },
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("Connect to IP") }
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Подключиться по IP")
+            }
         }
 
         if (connectionState.error != null) {
-            Text(connectionState.error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(connectionState.error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                }
+            }
         }
     }
 }

@@ -13,11 +13,15 @@ enum class PlaybackState {
 
 class AudioEngine(private val context: Context) {
 
+    @Volatile
     private var enginePtr: Long = 0L
 
     private val fillerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var fillerJob: Job? = null
+
+    @Volatile
     private var currentSource: AudioSource? = null
+    private val sourceLock = Any()
 
     private val _playbackState = MutableStateFlow(PlaybackState.STOPPED)
     val playbackState: StateFlow<PlaybackState> = _playbackState.asStateFlow()
@@ -30,6 +34,9 @@ class AudioEngine(private val context: Context) {
 
     private val _latencyMs = MutableStateFlow(-1.0)
     val latencyMs: StateFlow<Double> = _latencyMs.asStateFlow()
+
+    private val _lastError = MutableStateFlow<String?>(null)
+    val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
     companion object {
         private const val TARGET_SAMPLE_RATE = 48000
@@ -97,114 +104,80 @@ class AudioEngine(private val context: Context) {
     }
 
     fun start(): Boolean {
-        if (enginePtr == 0L) return false
-        return nativeStart(enginePtr)
+        val ptr = enginePtr
+        if (ptr == 0L) return false
+        return nativeStart(ptr)
     }
 
     fun stop() {
-        if (enginePtr != 0L) nativeStop(enginePtr)
+        val ptr = enginePtr
+        if (ptr != 0L) nativeStop(ptr)
     }
 
     fun getLatencyMs(): Double {
-        if (enginePtr == 0L) return -1.0
-        val lat = nativeGetLatencyMs(enginePtr)
+        val ptr = enginePtr
+        if (ptr == 0L) return -1.0
+        val lat = nativeGetLatencyMs(ptr)
         if (lat >= 0) _latencyMs.value = lat
         return lat
     }
 
     fun writePcmData(data: FloatArray): Int {
-        if (enginePtr == 0L) return 0
-        return nativeWriteBuffer(enginePtr, data, 0, data.size)
+        val ptr = enginePtr
+        if (ptr == 0L) return 0
+        return nativeWriteBuffer(ptr, data, 0, data.size)
     }
 
     fun availableWrite(): Int {
-        if (enginePtr == 0L) return 0
-        return nativeAvailableWrite(enginePtr)
+        val ptr = enginePtr
+        if (ptr == 0L) return 0
+        return nativeAvailableWrite(ptr)
     }
 
     fun availableRead(): Int {
-        if (enginePtr == 0L) return 0
-        return nativeAvailableRead(enginePtr)
+        val ptr = enginePtr
+        if (ptr == 0L) return 0
+        return nativeAvailableRead(ptr)
     }
 
     fun clearBuffer() {
-        if (enginePtr != 0L) nativeClearBuffer(enginePtr)
-    }
-
-    fun setClockOffset(offsetNs: Long) {
-        if (enginePtr != 0L) nativeSetClockOffset(enginePtr, offsetNs)
-    }
-
-    fun setDriftRate(ppm: Double) {
-        if (enginePtr != 0L) nativeSetDriftRate(enginePtr, ppm)
-    }
-
-    fun setAnchor(mediaTimeUs: Long, deviceTimeNs: Long) {
-        if (enginePtr != 0L) nativeSetAnchor(enginePtr, mediaTimeUs, deviceTimeNs)
-    }
-
-    fun disableDriftCorrection() {
-        if (enginePtr != 0L) nativeDisableDriftCorrection(enginePtr)
-    }
-
-    fun getAgeNs(): Long {
-        if (enginePtr == 0L) return 0L
-        return nativeGetAgeNs(enginePtr)
+        val ptr = enginePtr
+        if (ptr != 0L) nativeClearBuffer(ptr)
     }
 
     fun enableSine(enable: Boolean) {
-        if (enginePtr != 0L) nativeEnableSine(enginePtr, enable)
+        val ptr = enginePtr
+        if (ptr != 0L) nativeEnableSine(ptr, enable)
     }
 
     fun isSineEnabled(): Boolean {
-        if (enginePtr == 0L) return false
-        return nativeIsSineEnabled(enginePtr)
+        val ptr = enginePtr
+        if (ptr == 0L) return false
+        return nativeIsSineEnabled(ptr)
     }
 
     fun playFile(uri: Uri): Boolean {
         stopPlayback()
-
         val source = try {
             AudioSourceFactory.create(context, uri, TARGET_SAMPLE_RATE, TARGET_CHANNELS)
         } catch (e: Exception) {
+            _lastError.value = e.message
+            return false
+        }
+        synchronized(sourceLock) {
+            currentSource = source
+        }
+        _currentInfo.value = source.info
+        _lastError.value = null
+
+        if (!start()) {
+            _lastError.value = "Failed to start audio engine"
             return false
         }
 
-        currentSource = source
-        _currentInfo.value = source.info
-
-        if (!start()) return false
-
         clearBuffer()
         _playbackState.value = PlaybackState.PLAYING
-
-        fillerJob = fillerScope.launch {
-            try {
-                while (isActive && _playbackState.value == PlaybackState.PLAYING) {
-                    while (availableWrite() < MIN_FREE_FRAMES) {
-                        if (!isActive || _playbackState.value != PlaybackState.PLAYING) return@launch
-                        delay(5)
-                    }
-
-                    val chunk = source.readNext(FRAMES_PER_CHUNK)
-                    if (chunk == null) {
-                        while (isActive && availableRead() > 0) {
-                            delay(50)
-                        }
-                        delay(200)
-                        _playbackState.value = PlaybackState.STOPPED
-                        break
-                    }
-
-                    nativeWriteBuffer(enginePtr, chunk, 0, chunk.size)
-                    _positionFrames.value = source.getPositionFrames()
-                }
-            } catch (e: CancellationException) {
-                // expected on stop/pause
-            } catch (e: Exception) {
-                _playbackState.value = PlaybackState.STOPPED
-            }
-        }
+        startFiller(source)
         return true
     }
 
@@ -217,50 +190,33 @@ class AudioEngine(private val context: Context) {
 
     fun resume() {
         if (_playbackState.value != PlaybackState.PAUSED) return
-        val source = currentSource ?: return
-
-        _playbackState.value = PlaybackState.PLAYING
-
-        fillerJob = fillerScope.launch {
-            try {
-                while (isActive && _playbackState.value == PlaybackState.PLAYING) {
-                    while (availableWrite() < MIN_FREE_FRAMES) {
-                        if (!isActive || _playbackState.value != PlaybackState.PLAYING) return@launch
-                        delay(5)
-                    }
-
-                    val chunk = source.readNext(FRAMES_PER_CHUNK)
-                    if (chunk == null) {
-                        while (isActive && availableRead() > 0) delay(50)
-                        delay(200)
-                        _playbackState.value = PlaybackState.STOPPED
-                        break
-                    }
-
-                    nativeWriteBuffer(enginePtr, chunk, 0, chunk.size)
-                    _positionFrames.value = source.getPositionFrames()
-                }
-            } catch (_: CancellationException) {
-            } catch (e: Exception) {
-                _playbackState.value = PlaybackState.STOPPED
-            }
+        val source: AudioSource?
+        synchronized(sourceLock) {
+            source = currentSource
         }
+        if (source == null) return
+        _playbackState.value = PlaybackState.PLAYING
+        startFiller(source)
     }
 
     fun seekToMediaTimeUs(timeUs: Long) {
-        val source = currentSource ?: return
-        val info = source.info
-        val frameIndex = (timeUs * info.sampleRate) / 1_000_000L
+        val source: AudioSource?
+        synchronized(sourceLock) {
+            source = currentSource
+        }
+        val src = source ?: return
+        val info = src.info
+        val frameIndex = (timeUs.toDouble() * info.sampleRate / 1_000_000.0).toLong()
 
         fillerJob?.cancel()
         fillerJob = null
         clearBuffer()
 
-        source.seekToFrame(frameIndex.coerceIn(0, info.totalFrames))
-        _positionFrames.value = source.getPositionFrames()
+        src.seekToFrame(frameIndex.coerceIn(0, info.totalFrames))
+        _positionFrames.value = src.getPositionFrames()
 
         if (_playbackState.value == PlaybackState.PLAYING) {
-            startFiller(source)
+            startFiller(src)
         }
     }
 
@@ -277,6 +233,8 @@ class AudioEngine(private val context: Context) {
                         if (!isActive || _playbackState.value != PlaybackState.PLAYING) return@launch
                         delay(5)
                     }
+                    val ptr = enginePtr
+                    if (ptr == 0L) break
 
                     val chunk = source.readNext(FRAMES_PER_CHUNK)
                     if (chunk == null) {
@@ -286,11 +244,12 @@ class AudioEngine(private val context: Context) {
                         break
                     }
 
-                    nativeWriteBuffer(enginePtr, chunk, 0, chunk.size)
+                    nativeWriteBuffer(ptr, chunk, 0, chunk.size)
                     _positionFrames.value = source.getPositionFrames()
                 }
             } catch (_: CancellationException) {
             } catch (e: Exception) {
+                _lastError.value = e.message
                 _playbackState.value = PlaybackState.STOPPED
             }
         }
@@ -299,18 +258,48 @@ class AudioEngine(private val context: Context) {
     fun stopPlayback() {
         fillerJob?.cancel()
         fillerJob = null
-        currentSource?.close()
-        currentSource = null
+        synchronized(sourceLock) {
+            currentSource?.close()
+            currentSource = null
+        }
         stop()
         _playbackState.value = PlaybackState.STOPPED
         _positionFrames.value = 0L
         _currentInfo.value = null
     }
 
+    fun setClockOffset(offsetNs: Long) {
+        val ptr = enginePtr
+        if (ptr != 0L) nativeSetClockOffset(ptr, offsetNs)
+    }
+
+    fun setDriftRate(ppm: Double) {
+        val ptr = enginePtr
+        if (ptr != 0L) nativeSetDriftRate(ptr, ppm)
+    }
+
+    fun setAnchor(mediaTimeUs: Long, deviceTimeNs: Long) {
+        val ptr = enginePtr
+        if (ptr != 0L) nativeSetAnchor(ptr, mediaTimeUs, deviceTimeNs)
+    }
+
+    fun disableDriftCorrection() {
+        val ptr = enginePtr
+        if (ptr != 0L) nativeDisableDriftCorrection(ptr)
+    }
+
+    fun getAgeNs(): Long {
+        val ptr = enginePtr
+        if (ptr == 0L) return 0L
+        return nativeGetAgeNs(ptr)
+    }
+
     fun close() {
         stopPlayback()
-        if (enginePtr != 0L) {
-            nativeDestroy(enginePtr)
+        fillerScope.cancel()
+        val ptr = enginePtr
+        if (ptr != 0L) {
+            nativeDestroy(ptr)
             enginePtr = 0L
         }
     }

@@ -14,11 +14,15 @@ import ru.audiosynchronizer.R
 object SyncNotification {
 
     private const val CHANNEL_ID = "audio_sync"
-    private const val CHANNEL_NAME = "Audio Sync"
+    private const val CHANNEL_NAME = "Синхронизация аудио"
     const val NOTIFICATION_ID = 1
     const val ACTION_STOP = "ru.audiosynchronizer.ACTION_STOP"
 
+    @Volatile
+    private var channelCreated = false
+
     fun createChannel(context: Context) {
+        if (channelCreated) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (manager.getNotificationChannel(CHANNEL_ID) == null) {
             val channel = NotificationChannel(
@@ -26,11 +30,12 @@ object SyncNotification {
                 CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Audio synchronization service"
+                description = "Сервис синхронизации аудио"
                 setShowBadge(false)
             }
             manager.createNotificationChannel(channel)
         }
+        channelCreated = true
     }
 
     fun buildNotification(context: Context, title: String, text: String): Notification {
@@ -57,9 +62,20 @@ object SyncNotification {
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(openPi)
-            .addAction(0, "Stop", stopPi)
+            .addAction(0, "Остановить", stopPi)
             .setOngoing(true)
             .setSilent(true)
             .build()
+    }
+
+    fun updateNotification(context: Context, title: String, text: String) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = buildNotification(context, title, text)
+        manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    fun cancelNotification(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(NOTIFICATION_ID)
     }
 }

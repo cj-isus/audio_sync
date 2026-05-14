@@ -43,14 +43,20 @@ JNIEXPORT jint JNICALL
 Java_ru_audiosynchronizer_audio_AudioEngine_nativeWriteBuffer(
         JNIEnv *env, jobject, jlong enginePtr, jfloatArray data, jint offset, jint size) {
     auto *engine = reinterpret_cast<AudioEngine *>(enginePtr);
-    if (!engine) return 0;
+    if (!engine || !data) return 0;
 
-    jfloat *elements = env->GetFloatArrayElements(data, nullptr);
+    jsize arrayLen = env->GetArrayLength(data);
+    if (offset < 0 || size < 0 || offset + size > arrayLen) {
+        return 0;
+    }
+
+    jfloat *elements = static_cast<jfloat *>(
+        env->GetPrimitiveArrayCritical(data, nullptr));
     if (!elements) return 0;
 
     int32_t written = engine->writePcmData(elements + offset, size);
 
-    env->ReleaseFloatArrayElements(data, elements, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(data, elements, JNI_ABORT);
     return written;
 }
 

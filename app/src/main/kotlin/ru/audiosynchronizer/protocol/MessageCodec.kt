@@ -3,6 +3,7 @@ package ru.audiosynchronizer.protocol
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
@@ -16,6 +17,7 @@ object MessageCodec {
     }
 
     private const val HEADER_SIZE = 5
+    private const val MAX_PAYLOAD_SIZE = 65535
 
     fun encode(msg: Message): ByteArray {
         val type: Byte = when (msg) {
@@ -28,6 +30,7 @@ object MessageCodec {
             is Message.WireChunkMsg -> 0x07
         }
         val payload = json.encodeToString(msg).toByteArray(Charsets.UTF_8)
+        require(payload.size <= MAX_PAYLOAD_SIZE) { "Payload too large: ${payload.size}" }
         val buf = ByteBuffer.allocate(HEADER_SIZE + payload.size)
         buf.put(type)
         buf.putShort(payload.size.toShort())
@@ -43,65 +46,44 @@ object MessageCodec {
         val payloadLen = buf.short.toInt() and 0xFFFF
         buf.short
 
+        if (payloadLen <= 0 || payloadLen > MAX_PAYLOAD_SIZE) return null
         if (length < HEADER_SIZE + payloadLen) return null
 
         val payloadBytes = ByteArray(payloadLen)
         buf.get(payloadBytes)
         val payloadJson = String(payloadBytes, Charsets.UTF_8)
 
-        return try {
-            when (type) {
-                0x01.toByte() -> json.decodeFromString<Message.Hello>(payloadJson)
-                0x02.toByte() -> json.decodeFromString<Message.TimelineAnchor>(payloadJson)
-                0x03.toByte() -> json.decodeFromString<Message.ClockSync>(payloadJson)
-                0x04.toByte() -> json.decodeFromString<Message.Control>(payloadJson)
-                0x05.toByte() -> json.decodeFromString<Message.FileMeta>(payloadJson)
-                0x06.toByte() -> json.decodeFromString<Message.Heartbeat>(payloadJson)
-                0x07.toByte() -> json.decodeFromString<Message.WireChunkMsg>(payloadJson)
-                else -> null
-            }
-        } catch (e: SerializationException) {
-            null
-        }
+        return decodePayload(type, payloadJson)
     }
 
     fun readMessage(input: InputStream): Message? {
-        val header = ByteArray(HEADER_SIZE)
-        var totalRead = 0
-        while (totalRead < HEADER_SIZE) {
-            val n = input.read(header, totalRead, HEADER_SIZE - totalRead)
-            if (n < 0) return null
-            totalRead += n
-        }
-
-        val buf = ByteBuffer.wrap(header)
-        val type = buf.get()
-        val payloadLen = buf.short.toInt() and 0xFFFF
-        buf.short
-
-        if (payloadLen <= 0 || payloadLen > 65536) return null
-
-        val payload = ByteArray(payloadLen)
-        totalRead = 0
-        while (totalRead < payloadLen) {
-            val n = input.read(payload, totalRead, payloadLen - totalRead)
-            if (n < 0) return null
-            totalRead += n
-        }
-
-        val payloadJson = String(payload, Charsets.UTF_8)
         return try {
-            when (type) {
-                0x01.toByte() -> json.decodeFromString<Message.Hello>(payloadJson)
-                0x02.toByte() -> json.decodeFromString<Message.TimelineAnchor>(payloadJson)
-                0x03.toByte() -> json.decodeFromString<Message.ClockSync>(payloadJson)
-                0x04.toByte() -> json.decodeFromString<Message.Control>(payloadJson)
-                0x05.toByte() -> json.decodeFromString<Message.FileMeta>(payloadJson)
-                0x06.toByte() -> json.decodeFromString<Message.Heartbeat>(payloadJson)
-                0x07.toByte() -> json.decodeFromString<Message.WireChunkMsg>(payloadJson)
-                else -> null
+            val header = ByteArray(HEADER_SIZE)
+            var totalRead = 0
+            while (totalRead < HEADER_SIZE) {
+                val n = input.read(header, totalRead, HEADER_SIZE - totalRead)
+                if (n < 0) return null
+                totalRead += n
             }
-        } catch (e: SerializationException) {
+
+            val buf = ByteBuffer.wrap(header)
+            val type = buf.get()
+            val payloadLen = buf.short.toInt() and 0xFFFF
+            buf.short
+
+            if (payloadLen <= 0 || payloadLen > MAX_PAYLOAD_SIZE) return null
+
+            val payload = ByteArray(payloadLen)
+            totalRead = 0
+            while (totalRead < payloadLen) {
+                val n = input.read(payload, totalRead, payloadLen - totalRead)
+                if (n < 0) return null
+                totalRead += n
+            }
+
+            val payloadJson = String(payload, Charsets.UTF_8)
+            decodePayload(type, payloadJson)
+        } catch (e: IOException) {
             null
         }
     }
@@ -109,5 +91,24 @@ object MessageCodec {
     fun writeMessage(output: OutputStream, msg: Message) {
         output.write(encode(msg))
         output.flush()
+    }
+
+    private fun decodePayload(type: Byte, payloadJson: String): Message? {
+        return try {
+            when (type) {
+                0x01.toByte() -> json.decodeFromString<Message.Hello>(payloadJson)
+                0x02.toByte() -> json.decodeFromString<Message.TimelineAnchor>(payloadJson)
+                0x03.toByte() -> json.decodeFromString<Message.ClockSync>(payloadJson)
+                0x04.toByte() -> json.decodeFromString<Message.Control>(payloadJson)
+                0x05.toByte() -> json.decodeFromString<Message.FileMeta>(payloadJson)
+                0x06.toByte() -> json.decodeFromString<Message.Heartbeat>(payloadJson)
+                0x07.toByte() -> json.decodeFromString<Message.WireChunkMsg>(payloadJson)
+                else -> null
+            }
+        } catch (e: SerializationException) {
+            null
+        } catch (e: IllegalArgumentException) {
+            null
+        }
     }
 }

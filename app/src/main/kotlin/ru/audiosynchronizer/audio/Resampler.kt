@@ -8,8 +8,13 @@ object Resampler {
         outputChannels: Int,
         ratio: Double
     ): FloatArray {
+        if (input.isEmpty() || inputChannels <= 0 || outputChannels <= 0 || ratio <= 0.0) {
+            return FloatArray(0)
+        }
         val inputFrames = input.size / inputChannels
+        if (inputFrames == 0) return FloatArray(0)
         val outputFrames = if (ratio == 1.0) inputFrames else (inputFrames * ratio).toInt()
+        if (outputFrames <= 0) return FloatArray(0)
         val output = FloatArray(outputFrames * outputChannels)
 
         if (inputChannels == outputChannels && ratio == 1.0) {
@@ -38,6 +43,7 @@ object Resampler {
     }
 
     fun resampleMonoToStereo(input: FloatArray): FloatArray {
+        if (input.isEmpty()) return FloatArray(0)
         val output = FloatArray(input.size * 2)
         for (i in input.indices) {
             output[i * 2] = input[i]
@@ -52,10 +58,13 @@ object Resampler {
         fromRate: Int,
         toRate: Int
     ): FloatArray {
+        if (input.isEmpty() || channels <= 0 || fromRate <= 0 || toRate <= 0) return input
         if (fromRate == toRate) return input
         val ratio = toRate.toDouble() / fromRate.toDouble()
         val inputFrames = input.size / channels
+        if (inputFrames == 0) return FloatArray(0)
         val outputFrames = (inputFrames * ratio).toInt()
+        if (outputFrames <= 0) return FloatArray(0)
         val output = FloatArray(outputFrames * channels)
 
         for (outFrame in 0 until outputFrames) {

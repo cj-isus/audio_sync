@@ -8,8 +8,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import ru.audiosynchronizer.protocol.*
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
 
 data class ConnectedClient(
@@ -40,8 +43,8 @@ class ConnectionManager {
     private var clientSocket: Socket? = null
     private var clientJob: Job? = null
 
-    private val clients = mutableMapOf<Int, ConnectedClient>()
-    private var nextClientId = 0
+    private val clients = ConcurrentHashMap<Int, ConnectedClient>()
+    private val nextClientId = AtomicInteger(0)
 
     private var onMessageReceived: ((Message, InputStream?) -> Unit)? = null
     private var onClientConnected: ((ConnectedClient) -> Unit)? = null
@@ -50,8 +53,7 @@ class ConnectionManager {
     companion object {
         private const val TAG = "ConnectionManager"
         const val PORT = 1705
-        private const val HEARTBEAT_INTERVAL_MS = 5000L
-        private const val HEARTBEAT_TIMEOUT_MS = 15000L
+        private const val CONNECT_TIMEOUT_MS = 5000
     }
 
     fun setOnMessageReceived(listener: (Message, InputStream?) -> Unit) {
@@ -77,7 +79,7 @@ class ConnectionManager {
                 while (coroutineContext.isActive) {
                     try {
                         val clientSocket = serverSocket?.accept() ?: break
-                        val id = nextClientId++
+                        val id = nextClientId.getAndIncrement()
                         Log.i(TAG, "Client connected: ${clientSocket.inetAddress}")
 
                         val input = clientSocket.getInputStream()
@@ -150,7 +152,8 @@ class ConnectionManager {
 
     fun broadcast(msg: Message) {
         val data = MessageCodec.encode(msg)
-        for (client in clients.values) {
+        val snapshot = clients.values.toList()
+        for (client in snapshot) {
             try {
                 client.output.write(data)
                 client.output.flush()
@@ -165,8 +168,10 @@ class ConnectionManager {
         _state.value = _state.value.copy(leaderIp = leaderIp)
 
         clientJob = scope.launch {
+            var socket: Socket? = null
             try {
-                val socket = Socket(leaderIp, PORT)
+                socket = Socket()
+                socket.connect(InetSocketAddress(leaderIp, PORT), CONNECT_TIMEOUT_MS)
                 clientSocket = socket
                 val input = socket.getInputStream()
                 val output = socket.getOutputStream()
@@ -197,7 +202,7 @@ class ConnectionManager {
             } finally {
                 _state.value = _state.value.copy(isClientConnected = false)
                 onDisconnected?.invoke()
-                try { clientSocket?.close() } catch (_: Exception) {}
+                try { socket?.close() } catch (_: Exception) {}
                 clientSocket = null
             }
         }
@@ -217,7 +222,7 @@ class ConnectionManager {
         clientJob?.cancel()
         clientJob = null
 
-        for (client in clients.values) {
+        for (client in clients.values.toList()) {
             try { client.socket.close() } catch (_: Exception) {}
         }
         clients.clear()
@@ -228,5 +233,9 @@ class ConnectionManager {
         serverSocket = null
 
         _state.value = ConnectionState()
+    }
+
+    fun cancelScope() {
+        scope.cancel()
     }
 }

@@ -86,10 +86,11 @@ class FileTransfer(private val context: Context) {
     }
 
     fun receiveFile(inputStream: InputStream, meta: FileTransferMeta): File? {
+        val safeName = meta.name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val cacheDir = File(context.cacheDir, "audio_sync")
         if (!cacheDir.exists()) cacheDir.mkdirs()
-        val outFile = File(cacheDir, meta.name)
-        val tmpFile = File(cacheDir, "${meta.name}.tmp")
+        val outFile = File(cacheDir, safeName)
+        val tmpFile = File(cacheDir, "$safeName.tmp")
 
         return try {
             _progress.value = FileTransferProgress(
@@ -136,5 +137,10 @@ class FileTransfer(private val context: Context) {
     fun cancel() {
         transferJob?.cancel()
         transferJob = null
+    }
+
+    fun close() {
+        cancel()
+        scope.cancel()
     }
 }

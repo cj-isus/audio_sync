@@ -42,15 +42,16 @@ public:
 
 private:
     void setThreadAffinity();
-    void applyDriftCorrection(float *audioData, int32_t numFrames, int32_t samplesPerFrame);
+    int32_t applySoftCorrection(float *output, int32_t numFrames,
+                                 int32_t correction, int32_t samplesPerFrame);
 
     std::unique_ptr<RingBuffer> mRingBuffer;
     std::unique_ptr<DriftCorrector> mDriftCorrector;
     std::shared_ptr<oboe::AudioStream> mStream;
     std::atomic<bool> mIsPlaying{false};
     std::atomic<bool> mSineEnabled{false};
-    double mSinePhase = 0.0;
-    int32_t mSampleRate = 48000;
-    int32_t mFramesPerBurst = 0;
+    std::atomic<int32_t> mSampleRate{48000};
+    std::atomic<int32_t> mFramesPerBurst{0};
+    float mSinePhase = 0.0f;
     bool mThreadAffinitySet = false;
 };

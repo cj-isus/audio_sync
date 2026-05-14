@@ -20,8 +20,12 @@ target_link_libraries(audioengine
     oboe
 )
 
+target_link_options(audioengine PRIVATE
+    -Wl,-z,max-page-size=16384
+)
+
 target_compile_options(audioengine PRIVATE
-    -Wall -Werror -O3 -ffast-math
+    -Wall -Werror -O3 -fno-math-errno -fno-trapping-math
 )
 
 target_compile_features(audioengine PRIVATE cxx_std_17)

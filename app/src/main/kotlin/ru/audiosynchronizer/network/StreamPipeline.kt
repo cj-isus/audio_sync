@@ -135,4 +135,9 @@ class StreamPipeline(private val context: Context, private val engine: AudioEngi
         stopReceiver()
         _state.value = StreamState()
     }
+
+    fun close() {
+        stop()
+        scope.cancel()
+    }
 }

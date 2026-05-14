@@ -63,8 +63,8 @@ class SyncService : Service() {
     private fun startForeground() {
         val notification = SyncNotification.buildNotification(
             this,
-            "AudioSynchronizer",
-            "Service running"
+            "АудиоСинхронизатор",
+            "Сервис работает"
         )
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -83,20 +83,25 @@ class SyncService : Service() {
         wakeLockManager.acquire()
         val notification = SyncNotification.buildNotification(
             this,
-            "AudioSynchronizer",
-            "Sync active"
+            "АудиоСинхронизатор",
+            "Синхронизация активна"
         )
         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         nm.notify(SyncNotification.NOTIFICATION_ID, notification)
     }
 
     fun stopSync() {
-        wakeLockManager.release()
-        clockSync.stop()
-        connection.stop()
-        timeline.stop()
-        session.reset()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        try { wakeLockManager.release() } catch (_: Exception) {}
+        try { clockSync.stop() } catch (_: Exception) {}
+        try { connection.stop() } catch (_: Exception) {}
+        try { timeline.stop() } catch (_: Exception) {}
+        try { session.reset() } catch (_: Exception) {}
+        if (Build.VERSION.SDK_INT >= 33) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
         stopSelf()
     }
 
@@ -107,10 +112,14 @@ class SyncService : Service() {
     }
 
     override fun onDestroy() {
-        wakeLockManager.release()
-        audioEngine.close()
-        clockSync.stop()
-        connection.stop()
+        try { wakeLockManager.release() } catch (_: Exception) {}
+        try { audioEngine.close() } catch (_: Exception) {}
+        try { clockSync.stop() } catch (_: Exception) {}
+        try { connection.cancelScope() } catch (_: Exception) {}
         super.onDestroy()
+    }
+
+    companion object {
+        private const val STOP_FOREGROUND_REMOVE = 1
     }
 }

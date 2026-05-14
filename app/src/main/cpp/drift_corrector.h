@@ -1,8 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <cmath>
-#include <vector>
+#include <cstring>
 #include <algorithm>
 #include <atomic>
 
@@ -10,28 +9,26 @@ class DriftCorrector {
 public:
     DriftCorrector()
         : mClockOffsetNs(0)
-        , mDriftRatePpm(0.0)
+        , mDriftRatePpmX1M(0)
         , mAnchorMediaTimeUs(0)
         , mAnchorDeviceTimeNs(0)
         , mLastSyncTimeNs(0)
         , mCurrentAgeNs(0)
         , mCorrectionEnabled(false)
-        , mMiniBuffer(20)
-        , mShortBuffer(100)
-        , mLongBuffer(500)
-        , mMiniIdx(0)
-        , mShortIdx(0)
-        , mLongIdx(0)
         , mMiniCount(0)
         , mShortCount(0)
-        , mLongCount(0) {}
+        , mLongCount(0) {
+        std::memset(mMiniBuffer, 0, sizeof(mMiniBuffer));
+        std::memset(mShortBuffer, 0, sizeof(mShortBuffer));
+        std::memset(mLongBuffer, 0, sizeof(mLongBuffer));
+    }
 
     void setClockOffset(int64_t offsetNs) {
         mClockOffsetNs.store(offsetNs, std::memory_order_release);
     }
 
     void setDriftRate(double ppm) {
-        mDriftRatePpm.store(ppm, std::memory_order_release);
+        mDriftRatePpmX1M.store(static_cast<int64_t>(ppm * 1e6), std::memory_order_release);
     }
 
     void setAnchor(int64_t mediaTimeUs, int64_t deviceTimeNs) {
@@ -52,11 +49,12 @@ public:
         }
 
         int64_t offset = mClockOffsetNs.load(std::memory_order_acquire);
-        double drift = mDriftRatePpm.load(std::memory_order_acquire);
+        int64_t driftX1M = mDriftRatePpmX1M.load(std::memory_order_acquire);
         int64_t lastSync = mLastSyncTimeNs.load(std::memory_order_acquire);
 
-        int64_t serverNowNs = localNowNs + offset +
-            static_cast<int64_t>(drift * (localNowNs - lastSync) / 1e6);
+        int64_t driftNs = static_cast<int64_t>(
+            static_cast<double>(driftX1M) * static_cast<double>(localNowNs - lastSync) / 1e6);
+        int64_t serverNowNs = localNowNs + offset + driftNs;
 
         int64_t anchorDevNs = mAnchorDeviceTimeNs.load(std::memory_order_acquire);
         int64_t anchorMediaUs = mAnchorMediaTimeUs.load(std::memory_order_acquire);
@@ -75,75 +73,80 @@ public:
     int32_t computeFramesCorrection(int32_t numFrames, int32_t sampleRate) {
         if (!mCorrectionEnabled.load(std::memory_order_acquire)) return 0;
 
-        double miniMedian = getMiniMedian();
-        double shortMedian = getShortMedian();
-        double longMedian = getLongMedian();
+        double miniMed = medianOf(mMiniBuffer, mMiniCount, kMiniSize);
+        double shortMed = medianOf(mShortBuffer, mShortCount, kShortSize);
+        double longMed = medianOf(mLongBuffer, mLongCount, kLongSize);
 
-        if (std::abs(longMedian) > 2e6 && std::abs(mCurrentAgeNs.load()) > 500e3) {
-            return computeHardCorrection(numFrames, sampleRate, longMedian);
+        int32_t maxCorr = numFrames / 4;
+        if (maxCorr < 1) maxCorr = 1;
+
+        if (std::abs(longMed) > 2e6 && std::abs(mCurrentAgeNs.load()) > 500e3) {
+            int32_t corr = static_cast<int32_t>(longMed * sampleRate / 1e9);
+            if (corr > maxCorr) corr = maxCorr;
+            if (corr < -maxCorr) corr = -maxCorr;
+            resetBuffers();
+            return corr;
         }
 
-        if (std::abs(shortMedian) > 100e3 && std::abs(miniMedian) > 50e3) {
-            return computeSoftCorrection(numFrames, sampleRate, shortMedian);
+        if (std::abs(shortMed) > 100e3 && std::abs(miniMed) > 50e3) {
+            double rate = 0.0005;
+            if (shortMed < 0) rate = -rate;
+            double ageCorrNs = shortMed * rate;
+            int32_t corr = static_cast<int32_t>(ageCorrNs * sampleRate / 1e9);
+            if (corr > maxCorr) corr = maxCorr;
+            if (corr < -maxCorr) corr = -maxCorr;
+            if (corr == 0 && std::abs(shortMed) > 100e3) {
+                corr = (shortMed > 0) ? 1 : -1;
+            }
+            return corr;
         }
 
         return 0;
     }
 
-    void resetBuffers() {
-        mMiniCount = 0;
-        mShortCount = 0;
-        mLongCount = 0;
-        mMiniIdx = 0;
-        mShortIdx = 0;
-        mLongIdx = 0;
-    }
-
 private:
+    static constexpr int32_t kMiniSize = 20;
+    static constexpr int32_t kShortSize = 100;
+    static constexpr int32_t kLongSize = 500;
+
     std::atomic<int64_t> mClockOffsetNs;
-    std::atomic<double> mDriftRatePpm;
+    std::atomic<int64_t> mDriftRatePpmX1M;
     std::atomic<int64_t> mAnchorMediaTimeUs;
     std::atomic<int64_t> mAnchorDeviceTimeNs;
     std::atomic<int64_t> mLastSyncTimeNs;
     std::atomic<int64_t> mCurrentAgeNs;
     std::atomic<bool> mCorrectionEnabled;
 
-    std::vector<int64_t> mMiniBuffer;
-    std::vector<int64_t> mShortBuffer;
-    std::vector<int64_t> mLongBuffer;
-    int32_t mMiniIdx, mShortIdx, mLongIdx;
-    int32_t mMiniCount, mShortCount, mLongCount;
+    int64_t mMiniBuffer[kMiniSize];
+    int64_t mShortBuffer[kShortSize];
+    int64_t mLongBuffer[kLongSize];
+    int32_t mMiniCount;
+    int32_t mShortCount;
+    int32_t mLongCount;
+    int32_t mMiniIdx = 0;
+    int32_t mShortIdx = 0;
+    int32_t mLongIdx = 0;
 
     void addAge(int64_t age) {
         mMiniBuffer[mMiniIdx] = age;
-        mMiniIdx = (mMiniIdx + 1) % 20;
-        if (mMiniCount < 20) mMiniCount++;
+        mMiniIdx = (mMiniIdx + 1) % kMiniSize;
+        if (mMiniCount < kMiniSize) mMiniCount++;
 
         mShortBuffer[mShortIdx] = age;
-        mShortIdx = (mShortIdx + 1) % 100;
-        if (mShortCount < 100) mShortCount++;
+        mShortIdx = (mShortIdx + 1) % kShortSize;
+        if (mShortCount < kShortSize) mShortCount++;
 
         mLongBuffer[mLongIdx] = age;
-        mLongIdx = (mLongIdx + 1) % 500;
-        if (mLongCount < 500) mLongCount++;
+        mLongIdx = (mLongIdx + 1) % kLongSize;
+        if (mLongCount < kLongSize) mLongCount++;
     }
 
-    double getMiniMedian() const {
-        return medianOf(mMiniBuffer, mMiniCount);
-    }
-
-    double getShortMedian() const {
-        return medianOf(mShortBuffer, mShortCount);
-    }
-
-    double getLongMedian() const {
-        return medianOf(mLongBuffer, mLongCount);
-    }
-
-    static double medianOf(const std::vector<int64_t>& buf, int32_t count) {
+    static double medianOf(const int64_t *buf, int32_t count, int32_t) {
         if (count == 0) return 0.0;
-        std::vector<int64_t> sorted(buf.begin(), buf.begin() + count);
-        std::sort(sorted.begin(), sorted.end());
+        int64_t sorted[512];
+        if (count > 512) count = 512;
+        std::memcpy(sorted, buf, count * sizeof(int64_t));
+        insertionSort(sorted, count);
         int32_t trim = count / 4;
         if (trim == 0) return static_cast<double>(sorted[count / 2]);
         double sum = 0;
@@ -153,35 +156,24 @@ private:
         return sum / (count - 2 * trim);
     }
 
-    int32_t computeSoftCorrection(int32_t numFrames, int32_t sampleRate, double shortMedian) {
-        double correctionRate = 0.0005;
-        if (shortMedian < 0) correctionRate = -correctionRate;
-
-        double ageCorrectionNs = shortMedian * correctionRate;
-        int32_t frameCorrection = static_cast<int32_t>(
-            ageCorrectionNs * sampleRate / 1e9
-        );
-
-        if (frameCorrection > numFrames / 10) frameCorrection = numFrames / 10;
-        if (frameCorrection < -(numFrames / 10)) frameCorrection = -(numFrames / 10);
-
-        return frameCorrection;
+    static void insertionSort(int64_t *arr, int32_t n) {
+        for (int32_t i = 1; i < n; i++) {
+            int64_t key = arr[i];
+            int32_t j = i - 1;
+            while (j >= 0 && arr[j] > key) {
+                arr[j + 1] = arr[j];
+                j--;
+            }
+            arr[j + 1] = key;
+        }
     }
 
-    int32_t computeHardCorrection(int32_t numFrames, int32_t sampleRate, double longMedian) {
-        int32_t correction = static_cast<int32_t>(
-            longMedian * sampleRate / 1e9
-        );
-
-        if (std::abs(longMedian) > 500e6) {
-            return correction;
-        }
-
-        int32_t maxCorrection = numFrames / 4;
-        if (correction > maxCorrection) correction = maxCorrection;
-        if (correction < -maxCorrection) correction = -maxCorrection;
-
-        resetBuffers();
-        return correction;
+    void resetBuffers() {
+        mMiniCount = 0;
+        mShortCount = 0;
+        mLongCount = 0;
+        mMiniIdx = 0;
+        mShortIdx = 0;
+        mLongIdx = 0;
     }
 };

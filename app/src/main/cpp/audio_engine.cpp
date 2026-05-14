@@ -16,7 +16,7 @@
 
 static constexpr int32_t kSampleRate = 48000;
 static constexpr int32_t kChannelCount = 2;
-static constexpr int32_t kRingBufferFrames = 9600;
+static constexpr int32_t kRingBufferFrames = 16384;
 static constexpr float kSineAmplitude = 0.3f;
 static constexpr int32_t kMaxRestartAttempts = 3;
 static constexpr int32_t kRestartDelayMs = 20;
@@ -28,7 +28,7 @@ AudioEngine::AudioEngine()
 AudioEngine::~AudioEngine() { stop(); }
 
 bool AudioEngine::start() {
-    if (mStream && mIsPlaying) return true;
+    if (mStream && mIsPlaying.load(std::memory_order_acquire)) return true;
 
     oboe::AudioStreamBuilder builder;
     builder.setSharingMode(oboe::SharingMode::Exclusive)
@@ -53,8 +53,8 @@ bool AudioEngine::start() {
          oboe::convertToText(mStream->getAudioApi()),
          mStream->getFramesPerBurst());
 
-    mSampleRate = mStream->getSampleRate();
-    mFramesPerBurst = mStream->getFramesPerBurst();
+    mSampleRate.store(mStream->getSampleRate(), std::memory_order_release);
+    mFramesPerBurst.store(mStream->getFramesPerBurst(), std::memory_order_release);
 
     result = mStream->requestStart();
     if (result != oboe::Result::OK) {
@@ -64,7 +64,7 @@ bool AudioEngine::start() {
         return false;
     }
 
-    mIsPlaying = true;
+    mIsPlaying.store(true, std::memory_order_release);
     mThreadAffinitySet = false;
     LOGI("Audio engine started");
     return true;
@@ -76,15 +76,17 @@ void AudioEngine::stop() {
         mStream->close();
         mStream.reset();
     }
-    mIsPlaying = false;
-    mSinePhase = 0.0;
+    mIsPlaying.store(false, std::memory_order_release);
+    mSinePhase = 0.0f;
     mRingBuffer->clear();
     mDriftCorrector->disable();
     LOGI("Audio engine stopped");
 }
 
 int32_t AudioEngine::writePcmData(const float *data, int32_t numSamples) {
-    return mRingBuffer->write(data, numSamples / kChannelCount);
+    int32_t aligned = (numSamples / kChannelCount) * kChannelCount;
+    if (aligned <= 0) return 0;
+    return mRingBuffer->write(data, aligned / kChannelCount);
 }
 
 double AudioEngine::getLatencyMs() {
@@ -95,11 +97,10 @@ double AudioEngine::getLatencyMs() {
     return -1.0;
 }
 
-bool AudioEngine::isPlaying() const { return mIsPlaying; }
+bool AudioEngine::isPlaying() const { return mIsPlaying.load(std::memory_order_acquire); }
 
 void AudioEngine::enableSine(bool enable) {
     mSineEnabled.store(enable, std::memory_order_release);
-    if (!enable) mSinePhase = 0.0;
 }
 
 bool AudioEngine::isSineEnabled() const {
@@ -140,66 +141,103 @@ oboe::DataCallbackResult AudioEngine::onAudioReady(
         mThreadAffinitySet = true;
     }
 
-    int64_t localNowNs = static_cast<int64_t>(
-        std::chrono::steady_clock::now().time_since_epoch().count()
-    );
+    auto now = std::chrono::steady_clock::now();
+    int64_t localNowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        now.time_since_epoch()).count();
     mDriftCorrector->computeAge(localNowNs);
 
     auto *output = static_cast<float *>(audioData);
     int32_t samplesPerFrame = oboeStream->getChannelCount();
+    int32_t rate = mSampleRate.load(std::memory_order_acquire);
 
-    int32_t framesCorrection = mDriftCorrector->computeFramesCorrection(numFrames, mSampleRate);
+    int32_t framesCorrection = mDriftCorrector->computeFramesCorrection(numFrames, rate);
+
+    int32_t clampedCorrection = framesCorrection;
+    if (clampedCorrection > numFrames / 4) clampedCorrection = numFrames / 4;
+    if (clampedCorrection < -(numFrames / 4)) clampedCorrection = -(numFrames / 4);
 
     int32_t framesRead;
-    if (framesCorrection > 0) {
-        framesRead = mRingBuffer->read(output, numFrames + framesCorrection);
-        applyDriftCorrection(output, numFrames + framesCorrection, samplesPerFrame);
-    } else if (framesCorrection < 0) {
-        framesRead = mRingBuffer->read(output, numFrames + framesCorrection);
+    if (clampedCorrection > 0) {
+        framesRead = applySoftCorrection(output, numFrames, clampedCorrection, samplesPerFrame);
+    } else if (clampedCorrection < 0) {
+        int32_t readFrames = numFrames + clampedCorrection;
+        if (readFrames <= 0) readFrames = 1;
+        framesRead = mRingBuffer->read(output, readFrames);
         if (framesRead < numFrames) {
             int32_t startSample = framesRead * samplesPerFrame;
             int32_t totalSamples = numFrames * samplesPerFrame;
-            std::memset(&output[startSample], 0,
-                        (totalSamples - startSample) * sizeof(float));
+            if (startSample < totalSamples) {
+                std::memset(&output[startSample], 0,
+                            (totalSamples - startSample) * sizeof(float));
+            }
         }
     } else {
         framesRead = mRingBuffer->read(output, numFrames);
         if (framesRead < numFrames) {
             int32_t startSample = framesRead * samplesPerFrame;
             int32_t totalSamples = numFrames * samplesPerFrame;
-            std::memset(&output[startSample], 0,
-                        (totalSamples - startSample) * sizeof(float));
+            if (startSample < totalSamples) {
+                std::memset(&output[startSample], 0,
+                            (totalSamples - startSample) * sizeof(float));
+            }
         }
     }
 
     if (mSineEnabled.load(std::memory_order_acquire)) {
-        double phaseIncrement = 440.0 * 2.0 * M_PI / mSampleRate;
+        float phaseIncrement = 440.0f * 2.0f * static_cast<float>(M_PI) / static_cast<float>(rate);
         for (int32_t i = 0; i < numFrames; i++) {
-            float sample = kSineAmplitude * static_cast<float>(std::sin(mSinePhase));
+            float sample = kSineAmplitude * sinf(mSinePhase);
             for (int32_t ch = 0; ch < samplesPerFrame; ch++) {
                 output[i * samplesPerFrame + ch] += sample;
             }
             mSinePhase += phaseIncrement;
-            if (mSinePhase >= 2.0 * M_PI) mSinePhase -= 2.0 * M_PI;
+            if (mSinePhase >= 2.0f * static_cast<float>(M_PI)) mSinePhase -= 2.0f * static_cast<float>(M_PI);
         }
     }
 
     return oboe::DataCallbackResult::Continue;
 }
 
-void AudioEngine::applyDriftCorrection(float *audioData, int32_t totalFrames, int32_t samplesPerFrame) {
-    // Simple pass-through for now - correction is handled by frame count adjustment
-    // Future: implement sample interpolation for smoother correction
-    (void)audioData;
-    (void)totalFrames;
-    (void)samplesPerFrame;
+int32_t AudioEngine::applySoftCorrection(float *output, int32_t numFrames,
+                                          int32_t correction, int32_t samplesPerFrame) {
+    int32_t totalReadFrames = numFrames + correction;
+    if (totalReadFrames > numFrames * 2) totalReadFrames = numFrames * 2;
+
+    auto *tempBuf = static_cast<float *>(alloca(totalReadFrames * samplesPerFrame * sizeof(float)));
+    int32_t framesRead = mRingBuffer->read(tempBuf, totalReadFrames);
+
+    if (framesRead <= numFrames) {
+        std::memcpy(output, tempBuf, framesRead * samplesPerFrame * sizeof(float));
+        if (framesRead < numFrames) {
+            std::memset(output + framesRead * samplesPerFrame, 0,
+                        (numFrames - framesRead) * samplesPerFrame * sizeof(float));
+        }
+        return framesRead;
+    }
+
+    float ratio = static_cast<float>(numFrames) / static_cast<float>(framesRead);
+    for (int32_t outFrame = 0; outFrame < numFrames; outFrame++) {
+        float srcFrame = outFrame / ratio;
+        int32_t srcIdx = static_cast<int32_t>(srcFrame);
+        float frac = srcFrame - static_cast<float>(srcIdx);
+        if (srcIdx >= framesRead - 1) {
+            srcIdx = framesRead - 1;
+            frac = 0.0f;
+        }
+        for (int32_t ch = 0; ch < samplesPerFrame; ch++) {
+            float s0 = tempBuf[srcIdx * samplesPerFrame + ch];
+            float s1 = tempBuf[(srcIdx + 1) * samplesPerFrame + ch];
+            output[outFrame * samplesPerFrame + ch] = s0 * (1.0f - frac) + s1 * frac;
+        }
+    }
+    return numFrames;
 }
 
 void AudioEngine::onErrorAfterClose(oboe::AudioStream *oboeStream, oboe::Result error) {
     LOGE("Error after close: %s", oboe::convertToText(error));
     if (error == oboe::Result::ErrorDisconnected) {
         LOGI("Attempting restart after disconnect");
-        mIsPlaying = false;
+        mIsPlaying.store(false, std::memory_order_release);
         int32_t attempt = 0;
         while (attempt < kMaxRestartAttempts) {
             usleep(kRestartDelayMs * 1000);

@@ -7,6 +7,7 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.CopyOnWriteArrayList
 
 data class DiscoveredDevice(
     val serviceName: String,
@@ -25,9 +26,14 @@ class DiscoveryManager(private val context: Context) {
     private val _isRegistered = MutableStateFlow(false)
     val isRegistered: StateFlow<Boolean> = _isRegistered.asStateFlow()
 
+    @Volatile
     private var nsdManager: NsdManager? = null
+    @Volatile
     private var registrationListener: NsdManager.RegistrationListener? = null
+    @Volatile
     private var discoveryListener: NsdManager.DiscoveryListener? = null
+
+    private val devices = CopyOnWriteArrayList<DiscoveredDevice>()
 
     companion object {
         private const val TAG = "DiscoveryManager"
@@ -69,7 +75,6 @@ class DiscoveryManager(private val context: Context) {
 
     fun startDiscovery() {
         val nsd = getNsdManager() ?: return
-        val devices = mutableListOf<DiscoveredDevice>()
 
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {
@@ -91,7 +96,7 @@ class DiscoveryManager(private val context: Context) {
                             host = host,
                             port = info.port
                         )
-                        devices.add(device)
+                        devices.addIfAbsent(device)
                         _discoveredDevices.value = devices.toList()
                         Log.i(TAG, "Resolved: $host:${info.port}")
                     }
@@ -124,13 +129,22 @@ class DiscoveryManager(private val context: Context) {
     }
 
     fun stopDiscovery() {
-        try { registrationListener?.let { nsdManager?.unregisterService(it) } } catch (_: Exception) {}
         try { discoveryListener?.let { nsdManager?.stopServiceDiscovery(it) } } catch (_: Exception) {}
-        registrationListener = null
         discoveryListener = null
         _isDiscovering.value = false
-        _isRegistered.value = false
+        devices.clear()
         _discoveredDevices.value = emptyList()
+    }
+
+    fun stopRegistration() {
+        try { registrationListener?.let { nsdManager?.unregisterService(it) } } catch (_: Exception) {}
+        registrationListener = null
+        _isRegistered.value = false
+    }
+
+    fun stopAll() {
+        stopDiscovery()
+        stopRegistration()
     }
 
     private fun getNsdManager(): NsdManager? {

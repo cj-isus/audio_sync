@@ -16,6 +16,7 @@ class KalmanFilter(
     private var sampleCount: Int = 0
     private var lastMeasurementTime: Long = 0L
 
+    @Synchronized
     fun update(measurement: Double, rtt: Double, currentTimeNs: Long = System.nanoTime()) {
         val dt = if (lastMeasurementTime > 0L) {
             (currentTimeNs - lastMeasurementTime) / 1e9
@@ -27,33 +28,33 @@ class KalmanFilter(
         val q0 = processStdDev * processStdDev * dt
         val q1 = driftProcessStdDev * driftProcessStdDev * dt
 
-        pOffset += q0
-        pDrift += q1
-        pCross += 0.0
+        var pOffsetPred = pOffset + 2.0 * pCross * dt + pDrift * dt * dt + q0
+        var pCrossPred = pCross + pDrift * dt
+        var pDriftPred = pDrift + q1
 
         offset += driftRate * dt
 
         val r = (rtt / 2.0) * (rtt / 2.0)
         val innovation = measurement - offset
-        val s = pOffset + r
+        val s = pOffsetPred + r
 
         if (sampleCount >= minSamples) {
             val ratio = kotlin.math.abs(innovation) / kotlin.math.sqrt(s)
-            if (ratio > adaptiveCutoff * kotlin.math.sqrt(kotlin.math.abs(pOffset))) {
-                pOffset *= forgetFactor
-                pDrift *= forgetFactor
+            if (ratio > adaptiveCutoff * kotlin.math.sqrt(kotlin.math.abs(pOffsetPred))) {
+                pOffsetPred *= forgetFactor
+                pDriftPred *= forgetFactor
             }
         }
 
-        val k0 = pOffset / s
-        val k1 = pCross / s
+        val k0 = pOffsetPred / s
+        val k1 = pCrossPred / s
 
         offset += k0 * innovation
         driftRate += k1 * innovation
 
-        pOffset -= k0 * pOffset
-        pDrift -= k1 * pCross
-        pCross -= k0 * pCross
+        pOffset = pOffsetPred - k0 * pOffsetPred
+        pDrift = pDriftPred - k1 * pCrossPred
+        pCross = pCrossPred - k0 * pCrossPred
 
         if (kotlin.math.abs(driftRate) > driftThreshold) {
             driftRate = driftThreshold * kotlin.math.sign(driftRate)
@@ -62,14 +63,19 @@ class KalmanFilter(
         sampleCount++
     }
 
+    @Synchronized
     fun getOffset(): Double = offset
 
+    @Synchronized
     fun getDriftRate(): Double = driftRate
 
+    @Synchronized
     fun isStable(): Boolean = sampleCount >= minSamples
 
+    @Synchronized
     fun getSampleCount(): Int = sampleCount
 
+    @Synchronized
     fun reset() {
         offset = 0.0
         driftRate = 0.0

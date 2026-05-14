@@ -91,7 +91,8 @@ class PcmFileReader(
                     foundData = true
                 }
                 else -> {
-                    dis.skipBytes(chunkSize.toInt().coerceAtMost(Int.MAX_VALUE))
+                    val skipBytes = chunkSize.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                    dis.skipBytes(skipBytes)
                 }
             }
         }
@@ -140,6 +141,7 @@ class PcmFileReader(
 
     override fun readNext(frames: Int): FloatArray? {
         val dis = dataStream ?: return null
+        if (reachedEof) return null
         val bytesPerSample = wavBitsPerSample / 8
         val sourceFrames = if (resampleRatio != 1.0) {
             (frames / resampleRatio).toInt().coerceAtLeast(1)
@@ -149,7 +151,10 @@ class PcmFileReader(
 
         val samplesToRead = sourceFrames * wavChannels
         val raw = readRawSamples(dis, samplesToRead, bytesPerSample)
-        if (raw.isEmpty()) return null
+        if (raw.isEmpty()) {
+            reachedEof = true
+            return null
+        }
 
         val actualFrames = raw.size / wavChannels
 
@@ -242,13 +247,9 @@ class PcmFileReader(
         _positionFrames = frameIndex
     }
 
-    override fun isAtEnd(): Boolean {
-        return try {
-            dataStream?.let { it.available() <= 0 } ?: true
-        } catch (e: java.io.IOException) {
-            true
-        }
-    }
+    private var reachedEof = false
+
+    override fun isAtEnd(): Boolean = reachedEof
 
     override fun close() {
         try { dataStream?.close() } catch (_: Exception) {}

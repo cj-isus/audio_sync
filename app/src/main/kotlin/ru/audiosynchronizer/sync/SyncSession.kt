@@ -28,14 +28,29 @@ class SyncSession {
     private val _sessionState = MutableStateFlow(SyncSessionState())
     val sessionState: StateFlow<SyncSessionState> = _sessionState.asStateFlow()
 
+    @Volatile
     private var _lastAnchor: TimelineAnchorMessage? = null
     val lastAnchor: TimelineAnchorMessage? get() = _lastAnchor
+
+    private val validTransitions = mapOf(
+        SessionState.DISCONNECTED to setOf(SessionState.CONNECTING),
+        SessionState.CONNECTING to setOf(SessionState.CLOCK_SYNCING, SessionState.DISCONNECTED),
+        SessionState.CLOCK_SYNCING to setOf(SessionState.FILE_TRANSFER, SessionState.READY, SessionState.DISCONNECTED),
+        SessionState.FILE_TRANSFER to setOf(SessionState.READY, SessionState.DISCONNECTED),
+        SessionState.READY to setOf(SessionState.PLAYING, SessionState.DISCONNECTED),
+        SessionState.PLAYING to setOf(SessionState.PAUSED, SessionState.READY, SessionState.DISCONNECTED),
+        SessionState.PAUSED to setOf(SessionState.PLAYING, SessionState.READY, SessionState.DISCONNECTED)
+    )
 
     fun setLeader(isLeader: Boolean) {
         _sessionState.value = _sessionState.value.copy(isLeader = isLeader)
     }
 
     fun setState(state: SessionState) {
+        val current = _sessionState.value.state
+        if (current != state && current !in (validTransitions[state] ?: emptySet()) && state != SessionState.DISCONNECTED) {
+            return
+        }
         _sessionState.value = _sessionState.value.copy(state = state, error = null)
     }
 

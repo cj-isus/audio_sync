@@ -22,7 +22,9 @@ class TimelineManager(
     private val _currentPositionUs = MutableStateFlow(0L)
     val currentPositionUs: StateFlow<Long> = _currentPositionUs.asStateFlow()
 
+    @Volatile
     private var lastAnchor: TimelineAnchorMessage? = null
+    @Volatile
     private var lastSyncTimeNs: Long = 0L
 
     companion object {
@@ -71,7 +73,8 @@ class TimelineManager(
                     playbackState = getPlaybackState()
                 )
 
-                for ((clientId, output) in clients) {
+                val snapshot = clients.entries.toList()
+                for ((clientId, output) in snapshot) {
                     val anchor = latencyCompensator?.compensateAnchor(baseAnchor, clientId) ?: baseAnchor
                     try {
                         MessageCodec.writeMessage(output, Message.TimelineAnchor(anchor))
@@ -96,7 +99,9 @@ class TimelineManager(
         val driftPpm = clockSync.getDriftPpm()
 
         val myNowNs = System.nanoTime()
-        val serverNowNs = myNowNs + offsetNs + (driftPpm * (myNowNs - lastSyncTimeNs) / 1e6).toLong()
+        val dtNs = myNowNs - lastSyncTimeNs
+        val driftCorrectionNs = (driftPpm * dtNs / 1e6).toLong()
+        val serverNowNs = myNowNs + offsetNs + driftCorrectionNs
 
         val elapsedServerNs = serverNowNs - anchor.deviceTimeNs
         val positionUs = anchor.mediaTimeUs + (elapsedServerNs / 1000)
@@ -106,7 +111,6 @@ class TimelineManager(
     }
 
     fun sendFeedback(output: OutputStream, actualPlayoutTimeNs: Long, scheduledPlayoutTimeNs: Long) {
-        val deviation = actualPlayoutTimeNs - scheduledPlayoutTimeNs
         val heartbeat = ru.audiosynchronizer.protocol.HeartbeatMessage(
             timestampNs = System.nanoTime(),
             actualPlayoutTimeNs = actualPlayoutTimeNs,
@@ -129,13 +133,22 @@ class TimelineManager(
     }
 
     fun sendControl(output: OutputStream, action: Int, seekPositionUs: Long = 0L) {
-        val ctrl = ControlMessage(action = action, seekPositionUs = seekPositionUs)
-        MessageCodec.writeMessage(output, Message.Control(ctrl))
+        try {
+            val ctrl = ControlMessage(action = action, seekPositionUs = seekPositionUs)
+            MessageCodec.writeMessage(output, Message.Control(ctrl))
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send control", e)
+        }
     }
 
     fun stop() {
         anchorJob?.cancel()
         anchorJob = null
         lastAnchor = null
+    }
+
+    fun cancelScope() {
+        stop()
+        scope.cancel()
     }
 }

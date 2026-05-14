@@ -20,6 +20,7 @@ class HotspotManager(private val context: Context) {
     private val _hotspotInfo = MutableStateFlow(HotspotInfo())
     val hotspotInfo: StateFlow<HotspotInfo> = _hotspotInfo.asStateFlow()
 
+    @Volatile
     private var reservation: Any? = null
 
     companion object {
@@ -31,26 +32,40 @@ class HotspotManager(private val context: Context) {
         android.Manifest.permission.CHANGE_WIFI_STATE
     ])
     fun startHotspot() {
-        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            ?: run { Log.e(TAG, "WifiManager not available"); return }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 val callback = object : WifiManager.LocalOnlyHotspotCallback() {
                     override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
                         reservation = res
-                        val wifiConfig = res.wifiConfiguration
+                        val wifiConfig = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            null
+                        } else {
+                            @Suppress("DEPRECATION")
+                            res.wifiConfiguration
+                        }
+                        val ssid = wifiConfig?.SSID ?: "AudioSync"
+                        val passphrase = wifiConfig?.preSharedKey ?: ""
                         _hotspotInfo.value = HotspotInfo(
-                            ssid = wifiConfig?.SSID ?: "AudioSync",
-                            passphrase = wifiConfig?.preSharedKey ?: "",
+                            ssid = ssid,
+                            passphrase = passphrase,
                             isRunning = true
                         )
-                        Log.i(TAG, "Hotspot started: ${wifiConfig?.SSID}")
+                        Log.i(TAG, "Hotspot started: $ssid")
                     }
 
                     override fun onStopped() {
                         reservation = null
                         _hotspotInfo.value = HotspotInfo()
                         Log.i(TAG, "Hotspot stopped")
+                    }
+
+                    override fun onFailed(reason: Int) {
+                        reservation = null
+                        _hotspotInfo.value = HotspotInfo()
+                        Log.e(TAG, "Hotspot failed: reason=$reason")
                     }
                 }
                 wifiManager.startLocalOnlyHotspot(callback, null)

@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import ru.audiosynchronizer.protocol.TimelineAnchorMessage
+import java.util.concurrent.ConcurrentHashMap
 
 data class ClientLatencyInfo(
     val deviceName: String,
@@ -14,41 +15,46 @@ data class ClientLatencyInfo(
 
 class LatencyCompensator {
 
+    private val clientMap = ConcurrentHashMap<Int, ClientLatencyInfo>()
+
     private val _clientLatencies = MutableStateFlow<Map<Int, ClientLatencyInfo>>(emptyMap())
     val clientLatencies: StateFlow<Map<Int, ClientLatencyInfo>> = _clientLatencies.asStateFlow()
 
-    private val _maxLatencyMs = MutableStateFlow(0.0)
-    val maxLatencyMs: StateFlow<Double> = _maxLatencyMs.asStateFlow()
+    @Volatile
+    private var _maxLatencyMs = 0.0
+    val maxLatencyMs: Double get() = _maxLatencyMs
 
-    private val _localLatencyMs = MutableStateFlow(0.0)
-    val localLatencyMs: StateFlow<Double> = _localLatencyMs.asStateFlow()
+    @Volatile
+    private var _localLatencyMs = 0.0
+    val localLatencyMs: Double get() = _localLatencyMs
 
     companion object {
         private const val TAG = "LatencyCompensator"
     }
 
+    @Synchronized
     fun setLocalLatency(latencyMs: Double) {
-        _localLatencyMs.value = latencyMs
+        _localLatencyMs = latencyMs
         recalcMax()
     }
 
+    @Synchronized
     fun updateClientLatency(clientId: Int, info: ClientLatencyInfo) {
-        val map = _clientLatencies.value.toMutableMap()
-        map[clientId] = info
-        _clientLatencies.value = map
+        clientMap[clientId] = info
+        _clientLatencies.value = clientMap.toMap()
         recalcMax()
     }
 
+    @Synchronized
     fun removeClient(clientId: Int) {
-        val map = _clientLatencies.value.toMutableMap()
-        map.remove(clientId)
-        _clientLatencies.value = map
+        clientMap.remove(clientId)
+        _clientLatencies.value = clientMap.toMap()
         recalcMax()
     }
 
     fun compensateAnchor(anchor: TimelineAnchorMessage, clientId: Int): TimelineAnchorMessage {
-        val clientLatency = _clientLatencies.value[clientId]?.outputLatencyMs ?: return anchor
-        val maxLatency = _maxLatencyMs.value
+        val clientLatency = clientMap[clientId]?.outputLatencyMs ?: return anchor
+        val maxLatency = _maxLatencyMs
 
         val compensationUs = ((maxLatency - clientLatency) * 1000).toLong()
         val adjustedMediaTimeUs = anchor.mediaTimeUs - compensationUs
@@ -59,16 +65,16 @@ class LatencyCompensator {
         return anchor.copy(mediaTimeUs = adjustedMediaTimeUs)
     }
 
+    @Synchronized
     fun updateDeviation(clientId: Int, deviationNs: Long) {
-        val map = _clientLatencies.value.toMutableMap()
-        val existing = map[clientId] ?: return
-        map[clientId] = existing.copy(deviationNs = deviationNs)
-        _clientLatencies.value = map
+        val existing = clientMap[clientId] ?: return
+        clientMap[clientId] = existing.copy(deviationNs = deviationNs)
+        _clientLatencies.value = clientMap.toMap()
     }
 
     private fun recalcMax() {
-        val all = mutableListOf(_localLatencyMs.value)
-        _clientLatencies.value.values.forEach { all.add(it.outputLatencyMs) }
-        _maxLatencyMs.value = all.maxOrNull() ?: 0.0
+        val all = mutableListOf(_localLatencyMs)
+        clientMap.values.forEach { all.add(it.outputLatencyMs) }
+        _maxLatencyMs = all.maxOrNull() ?: 0.0
     }
 }
