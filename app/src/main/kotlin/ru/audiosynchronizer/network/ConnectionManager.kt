@@ -5,6 +5,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import ru.audiosynchronizer.protocol.*
 import java.io.InputStream
 import java.io.OutputStream
@@ -72,7 +73,7 @@ class ConnectionManager {
         stop()
         try {
             serverSocket = ServerSocket(PORT)
-            _state.value = _state.value.copy(isServerRunning = true, error = null)
+            _state.update { it.copy(isServerRunning = true, error = null) }
             Log.i(TAG, "Server started on port $PORT")
 
             serverJob = scope.launch {
@@ -97,7 +98,7 @@ class ConnectionManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start server", e)
-            _state.value = _state.value.copy(error = e.message)
+            _state.update { it.copy(error = e.message) }
         }
     }
 
@@ -143,7 +144,7 @@ class ConnectionManager {
 
     private fun updateClientList() {
         val names = clients.values.map { it.deviceName }
-        _state.value = _state.value.copy(connectedClients = names)
+        _state.update { it.copy(connectedClients = names) }
     }
 
     fun getClientOutputs(): List<OutputStream> {
@@ -165,7 +166,7 @@ class ConnectionManager {
 
     fun connectToLeader(leaderIp: String) {
         stop()
-        _state.value = _state.value.copy(leaderIp = leaderIp)
+        _state.update { it.copy(leaderIp = leaderIp) }
 
         clientJob = scope.launch {
             var socket: Socket? = null
@@ -186,7 +187,7 @@ class ConnectionManager {
                     Log.i(TAG, "Leader hello: ${response.data.deviceName}")
                 }
 
-                _state.value = _state.value.copy(isClientConnected = true, error = null)
+                _state.update { it.copy(isClientConnected = true, error = null) }
 
                 while (coroutineContext.isActive) {
                     val msg = MessageCodec.readMessage(input)
@@ -198,9 +199,9 @@ class ConnectionManager {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Connection failed", e)
-                _state.value = _state.value.copy(error = e.message)
+                _state.update { it.copy(error = e.message) }
             } finally {
-                _state.value = _state.value.copy(isClientConnected = false)
+                _state.update { it.copy(isClientConnected = false) }
                 onDisconnected?.invoke()
                 try { socket?.close() } catch (_: Exception) {}
                 clientSocket = null

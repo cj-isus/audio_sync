@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.AudioSynchronizer" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">#FAFAFA</item>
+        <item name="windowSplashScreenBackground">#121212</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="windowSplashScreenAnimationDuration">0</item>
         <item name="postSplashScreenTheme">@style/Theme.AudioSynchronizer.Main</item>
     </style>
 
-    <style name="Theme.AudioSynchronizer.Main" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.AudioSynchronizer.Main" parent="android:Theme.Material.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

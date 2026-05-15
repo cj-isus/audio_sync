@@ -48,7 +48,7 @@ class SyncSession {
 
     fun setState(state: SessionState) {
         val current = _sessionState.value.state
-        if (current != state && current !in (validTransitions[state] ?: emptySet()) && state != SessionState.DISCONNECTED) {
+        if (current != state && state !in (validTransitions[current] ?: emptySet()) && state != SessionState.DISCONNECTED) {
             return
         }
         _sessionState.value = _sessionState.value.copy(state = state, error = null)

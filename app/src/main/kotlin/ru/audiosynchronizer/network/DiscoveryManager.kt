@@ -74,6 +74,8 @@ class DiscoveryManager(private val context: Context) {
     }
 
     fun startDiscovery() {
+        if (_isDiscovering.value) return
+        stopDiscovery()
         val nsd = getNsdManager() ?: return
 
         val listener = object : NsdManager.DiscoveryListener {

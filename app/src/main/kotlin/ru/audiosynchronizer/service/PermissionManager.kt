@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 data class PermissionState(
     val audio: Boolean = false,
     val location: Boolean = false,
+    val nearbyWifi: Boolean = false,
     val camera: Boolean = false,
     val notification: Boolean = false,
     val storage: Boolean = false,
@@ -35,6 +36,9 @@ fun rememberPermissionState(): PermissionState {
 fun checkPermissions(context: Context): PermissionState {
     val audio = hasPermission(context, getAudioPermission())
     val location = hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+    val nearbyWifi = if (Build.VERSION.SDK_INT >= 33) {
+        hasPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES)
+    } else true
     val camera = hasPermission(context, Manifest.permission.CAMERA)
     val notification = if (Build.VERSION.SDK_INT >= 33) {
         hasPermission(context, Manifest.permission.POST_NOTIFICATIONS)
@@ -45,10 +49,11 @@ fun checkPermissions(context: Context): PermissionState {
     return PermissionState(
         audio = audio,
         location = location,
+        nearbyWifi = nearbyWifi,
         camera = camera,
         notification = notification,
         storage = storage,
-        allGranted = audio && location && camera && notification && storage
+        allGranted = audio && location && nearbyWifi && camera && notification && storage
     )
 }
 
@@ -60,6 +65,7 @@ fun getRequiredPermissions(): List<String> {
     )
     if (Build.VERSION.SDK_INT >= 33) {
         perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        perms.add(Manifest.permission.NEARBY_WIFI_DEVICES)
     }
     if (Build.VERSION.SDK_INT < 33) {
         perms.add(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -67,9 +73,35 @@ fun getRequiredPermissions(): List<String> {
     return perms
 }
 
+fun getLeaderPermissions(): List<String> {
+    val perms = mutableListOf(
+        Manifest.permission.ACCESS_FINE_LOCATION
+    )
+    if (Build.VERSION.SDK_INT >= 33) {
+        perms.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        perms.add(Manifest.permission.POST_NOTIFICATIONS)
+    }
+    return perms
+}
+
+fun getFollowerPermissions(): List<String> {
+    val perms = mutableListOf(
+        Manifest.permission.CAMERA,
+        Manifest.permission.ACCESS_FINE_LOCATION
+    )
+    if (Build.VERSION.SDK_INT >= 33) {
+        perms.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+    }
+    return perms
+}
+
 fun getAudioPermission(): String {
     return if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
     else Manifest.permission.READ_EXTERNAL_STORAGE
+}
+
+fun getNearbyWifiPermission(): String? {
+    return if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else null
 }
 
 private fun hasPermission(context: Context, permission: String): Boolean {
